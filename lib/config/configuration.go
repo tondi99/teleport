@@ -110,6 +110,13 @@ type CommandLineFlags struct {
 
 	// AppPublicAddr is the public address of the application to proxy.
 	AppPublicAddr string
+
+	// DatabaseName is the name of the database to proxy.
+	DatabaseName string
+	// DatabaseKind is the type of the proxied database.
+	DatabaseKind string
+	// DatabaseAddress is the address to connect to the proxied database.
+	DatabaseAddress string
 }
 
 // readConfigFile reads /etc/teleport.yaml (or whatever is passed via --config flag)
@@ -183,6 +190,9 @@ func ApplyFileConfig(fc *FileConfig, cfg *service.Config) error {
 	}
 	if fc.Apps.Disabled() {
 		cfg.Apps.Enabled = false
+	}
+	if fc.Databases.Disabled() {
+		cfg.Databases.Enabled = false
 	}
 	applyString(fc.NodeName, &cfg.Hostname)
 
@@ -360,6 +370,11 @@ func ApplyFileConfig(fc *FileConfig, cfg *service.Config) error {
 	}
 	if fc.Apps.Enabled() {
 		if err := applyAppsConfig(fc, cfg); err != nil {
+			return trace.Wrap(err)
+		}
+	}
+	if fc.Databases.Enabled() {
+		if err := applyDatabasesConfig(fc, cfg); err != nil {
 			return trace.Wrap(err)
 		}
 	}
@@ -718,6 +733,24 @@ func applyKubeConfig(fc *FileConfig, cfg *service.Config) error {
 	return nil
 }
 
+// applyDatabasesConfig applies file configuration for the "db_service" section.
+func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
+	cfg.Databases.Enabled = true
+	for _, database := range fc.Databases.Databases {
+		if err := database.Check(); err != nil {
+			return trace.Wrap(err)
+		}
+		// TODO(r0mant): Parse static/dynamic labels like apps below.
+		cfg.Databases.Databases = append(cfg.Databases.Databases,
+			service.Database{
+				Name:    database.Name,
+				Kind:    database.Kind,
+				Address: database.Address,
+			})
+	}
+	return nil
+}
+
 // applyAppsConfig applies file configuration for the "app_service" section.
 func applyAppsConfig(fc *FileConfig, cfg *service.Config) error {
 	// Apps are enabled.
@@ -1013,6 +1046,22 @@ func Configure(clf *CommandLineFlags, cfg *service.Config) error {
 		}
 	}
 
+	// If database name was specified on the command line, add to configuration.
+	if clf.DatabaseName != "" {
+		fileConf.Databases = Databases{
+			Service: Service{
+				EnabledFlag: "yes",
+			},
+			Databases: []*Database{
+				{
+					Name:    clf.DatabaseName,
+					Kind:    clf.DatabaseKind,
+					Address: clf.DatabaseAddress,
+				},
+			},
+		}
+	}
+
 	// If application name was specified on command line, add to configuration.
 	if clf.AppName != "" {
 		cfg.Apps.Enabled = true
@@ -1126,6 +1175,7 @@ func Configure(clf *CommandLineFlags, cfg *service.Config) error {
 		cfg.Auth.Enabled = strings.Contains(clf.Roles, defaults.RoleAuthService)
 		cfg.Proxy.Enabled = strings.Contains(clf.Roles, defaults.RoleProxy)
 		cfg.Apps.Enabled = strings.Contains(clf.Roles, defaults.RoleApp)
+		cfg.Databases.Enabled = strings.Contains(clf.Roles, defaults.RoleDatabase)
 	}
 
 	// apply --auth-server flag:
@@ -1333,7 +1383,8 @@ func validateRoles(roles string) error {
 		case defaults.RoleAuthService,
 			defaults.RoleNode,
 			defaults.RoleProxy,
-			defaults.RoleApp:
+			defaults.RoleApp,
+			defaults.RoleDatabase:
 			break
 		default:
 			return trace.Errorf("unknown role: '%s'", role)

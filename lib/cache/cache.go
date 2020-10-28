@@ -51,6 +51,7 @@ func ForAuth(cfg Config) Config {
 		{Kind: services.KindAccessRequest},
 		{Kind: services.KindAppServer},
 		{Kind: services.KindWebSession},
+		{Kind: services.KindDatabaseServer},
 	}
 	cfg.QueueSize = defaults.AuthQueueSize
 	return cfg
@@ -72,6 +73,7 @@ func ForProxy(cfg Config) Config {
 		{Kind: services.KindTunnelConnection},
 		{Kind: services.KindAppServer},
 		{Kind: services.KindWebSession},
+		{Kind: services.KindDatabaseServer},
 	}
 	cfg.QueueSize = defaults.ProxyQueueSize
 	return cfg
@@ -92,6 +94,7 @@ func ForRemoteProxy(cfg Config) Config {
 		{Kind: services.KindReverseTunnel},
 		{Kind: services.KindTunnelConnection},
 		{Kind: services.KindAppServer},
+		{Kind: services.KindDatabaseServer},
 	}
 	cfg.QueueSize = defaults.ProxyQueueSize
 	return cfg
@@ -128,6 +131,23 @@ func ForApps(cfg Config) Config {
 		{Kind: services.KindNamespace, Name: defaults.Namespace},
 	}
 	cfg.QueueSize = defaults.AppsQueueSize
+	return cfg
+}
+
+// ForDatabases sets up watch configuration for database proxy servers.
+func ForDatabases(cfg Config) Config {
+	cfg.Watches = []services.WatchKind{
+		{Kind: services.KindCertAuthority, LoadSecrets: false},
+		{Kind: services.KindClusterName},
+		{Kind: services.KindClusterConfig},
+		{Kind: services.KindUser},
+		{Kind: services.KindRole},
+		{Kind: services.KindProxy},
+		// Databases only need to "know" about default namespace events to
+		// avoid matching too much data about other namespaces or events.
+		{Kind: services.KindNamespace, Name: defaults.Namespace},
+	}
+	cfg.QueueSize = defaults.DatabasesQueueSize
 	return cfg
 }
 
@@ -715,4 +735,9 @@ func (c *Cache) GetAppServers(ctx context.Context, namespace string, opts ...ser
 // GetAppSession gets an application web session.
 func (c *Cache) GetAppSession(ctx context.Context, req services.GetAppSessionRequest) (services.WebSession, error) {
 	return c.appSessionCache.GetAppSession(ctx, req)
+}
+
+// GetDatabaseServers returns all registered database proxy servers.
+func (c *Cache) GetDatabaseServers(ctx context.Context, namespace string, opts ...services.MarshalOption) ([]services.Server, error) {
+	return c.presenceCache.GetDatabaseServers(ctx, namespace, opts...)
 }

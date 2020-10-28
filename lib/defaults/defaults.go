@@ -370,6 +370,9 @@ var (
 	// AppsQueueSize is apps service queue size.
 	AppsQueueSize = 128
 
+	// DatabasesQueueSize is db service queue size.
+	DatabasesQueueSize = 128
+
 	// CASignatureAlgorithm is the default signing algorithm to use when
 	// creating new SSH CAs.
 	CASignatureAlgorithm = ssh.SigAlgoRSASHA2512
@@ -438,6 +441,8 @@ const (
 	RoleAuthService = "auth"
 	// RoleApp is a application proxy.
 	RoleApp = "app"
+	// RoleDatabase is a database proxy role.
+	RoleDatabase = "db"
 )
 
 const (

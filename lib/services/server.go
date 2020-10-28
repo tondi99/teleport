@@ -73,6 +73,10 @@ type Server interface {
 	GetApps() []*App
 	// GetApps gets the list of applications this server is proxying.
 	SetApps([]*App)
+	// GetDatabases returns the list of databases this server is proxying.
+	GetDatabases() []*Database
+	// SetDatabases sets the list of databases this server is proxying.
+	SetDatabases([]*Database)
 	// V1 returns V1 version for backwards compatibility
 	V1() *ServerV1
 	// MatchAgainst takes a map of labels and returns True if this server
@@ -263,6 +267,16 @@ func (s *ServerV2) GetApps() []*App {
 // GetApps gets the list of applications this server is proxying.
 func (s *ServerV2) SetApps(apps []*App) {
 	s.Spec.Apps = apps
+}
+
+// GetDatabases returns the list of databases this server is proxying.
+func (s *ServerV2) GetDatabases() []*Database {
+	return s.Spec.Databases
+}
+
+// SetDatabases sets the list of databases this server is proxying.
+func (s *ServerV2) SetDatabases(dbs []*Database) {
+	s.Spec.Databases = dbs
 }
 
 func (s *ServerV2) String() string {
@@ -462,10 +476,22 @@ const ServerSpecV2Schema = `{
   "type": "object",
   "additionalProperties": false,
   "properties": {
-	"version": {"type": "string"},
+    "version": {"type": "string"},
     "addr": {"type": "string"},
     "protocol": {"type": "integer"},
     "public_addr": {"type": "string"},
+    "databases": {
+      "type": ["array"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "kind": {"type": "string"},
+          "uri": {"type": "string"}
+        }
+      }
+    },
     "apps":  {
       "type": ["array"],
       "items": {

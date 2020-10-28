@@ -389,6 +389,9 @@ const (
 
 	// AppTunnel is a tunnel where the application proxy dials back to the proxy.
 	AppTunnel TunnelType = "app"
+
+	// DatabaseTunnel is a tunnel where a database proxy dials back to the proxy.
+	DatabaseTunnel TunnelType = "db"
 )
 
 // TunnelType is the type of tunnel. Either node or proxy.

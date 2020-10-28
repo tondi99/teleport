@@ -28,6 +28,7 @@ message KeepAlive {
         UNKNOWN = 0;
         NODE = 1;
         APP = 2;
+        DATABASE = 3;
     }
     KeepAliveType Type = 9 [ (gogoproto.jsontag) = "type" ];
 }
@@ -128,7 +129,7 @@ message ResourceHeader {
         [ (gogoproto.nullable) = false, (gogoproto.jsontag) = "metadata,omitempty" ];
 }
 
-// ServerV2 represents a Node, App, Proxy or Auth server in a Teleport cluster.
+// ServerV2 represents a Node, App, Database, Proxy or Auth server in a Teleport cluster.
 message ServerV2 {
     option (gogoproto.goproto_stringer) = false;
     option (gogoproto.stringer) = false;
@@ -169,6 +170,8 @@ message ServerSpecV2 {
     string Version = 7 [ (gogoproto.jsontag) = "version" ];
     // Apps is a list of applications this server is proxying.
     repeated App Apps = 9 [ (gogoproto.jsontag) = "apps,omitempty" ];
+    // Databases is a list of databases this server is proxying.
+    repeated Database Databases = 10 [ (gogoproto.jsontag) = "databases,omitempty" ];
 }
 
 // App is a specific application that a server proxies.
@@ -196,6 +199,16 @@ message Rewrite {
     // Redirect defines a list of hosts which will be rewritten to the public
     // address of the application if they occur in the "Location" header.
     repeated string Redirect = 1 [ (gogoproto.jsontag) = "redirect" ];
+}
+
+// Database is a TODO
+message Database {
+    // Name
+    string Name = 1 [ (gogoproto.jsontag) = "name" ];
+    // Kind
+    string Kind = 2 [ (gogoproto.jsontag) = "kind" ];
+    // URI
+    string URI = 3 [ (gogoproto.jsontag) = "uri" ];
 }
 
 // CommandLabelV2 is a label that has a value as a result of the

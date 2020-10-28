@@ -279,6 +279,27 @@ func GetCheckerForBuiltinRole(clusterName string, clusterConfig services.Cluster
 					},
 				},
 			})
+	case teleport.RoleDatabase:
+		return services.FromSpec(
+			role.String(),
+			services.RoleSpecV3{
+				Allow: services.RoleConditions{
+					Namespaces: []string{services.Wildcard},
+					Rules: []services.Rule{
+						services.NewRule(services.KindEvent, services.RW()),
+						services.NewRule(services.KindProxy, services.RO()),
+						services.NewRule(services.KindCertAuthority, services.ReadNoSecrets()),
+						services.NewRule(services.KindUser, services.RO()),
+						services.NewRule(services.KindNamespace, services.RO()),
+						services.NewRule(services.KindRole, services.RO()),
+						services.NewRule(services.KindAuthServer, services.RO()),
+						services.NewRule(services.KindReverseTunnel, services.RW()),
+						services.NewRule(services.KindTunnelConnection, services.RO()),
+						services.NewRule(services.KindClusterConfig, services.RO()),
+						services.NewRule(services.KindDatabaseServer, services.RW()),
+					},
+				},
+			})
 	case teleport.RoleProxy:
 		// if in recording mode, return a different set of permissions than regular
 		// mode. recording proxy needs to be able to generate host certificates.
@@ -316,6 +337,7 @@ func GetCheckerForBuiltinRole(clusterName string, clusterConfig services.Cluster
 							services.NewRule(services.KindSemaphore, services.RW()),
 							services.NewRule(services.KindAppServer, services.RO()),
 							services.NewRule(services.KindWebSession, services.RW()),
+							services.NewRule(services.KindDatabaseServer, services.RO()),
 							// this rule allows local proxy to update the remote cluster's host certificate authorities
 							// during certificates renewal
 							{
@@ -369,6 +391,7 @@ func GetCheckerForBuiltinRole(clusterName string, clusterConfig services.Cluster
 						services.NewRule(services.KindSemaphore, services.RW()),
 						services.NewRule(services.KindAppServer, services.RO()),
 						services.NewRule(services.KindWebSession, services.RW()),
+						services.NewRule(services.KindDatabaseServer, services.RO()),
 						// this rule allows local proxy to update the remote cluster's host certificate authorities
 						// during certificates renewal
 						{
@@ -565,7 +588,8 @@ func (r BuiltinRole) IsServer() bool {
 	return r.Role == teleport.RoleProxy ||
 		r.Role == teleport.RoleNode ||
 		r.Role == teleport.RoleAuth ||
-		r.Role == teleport.RoleApp
+		r.Role == teleport.RoleApp ||
+		r.Role == teleport.RoleDatabase
 }
 
 // GetServerID extracts the identity from the full name. The username

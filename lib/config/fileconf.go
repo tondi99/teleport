@@ -167,9 +167,11 @@ var (
 		"kubernetes_service":      true,
 		"kube_cluster_name":       false,
 		"app_service":             true,
+		"db_service":              true,
 		"protocol":                false,
 		"uri":                     false,
 		"apps":                    false,
+		"databases":               false,
 		"https_keypairs":          true,
 		"key_file":                false,
 		"insecure_skip_verify":    false,
@@ -199,6 +201,10 @@ type FileConfig struct {
 	// Apps is the "app_service" section in Teleport file configuration which
 	// defines application access configuration.
 	Apps Apps `yaml:"app_service,omitempty"`
+
+	// Databases is the "db_service" section in Teleport configuration file
+	// that defined database access configuration.
+	Databases Databases `yaml:"db_service,omitempty"`
 }
 
 type YAMLMap map[interface{}]interface{}
@@ -804,6 +810,43 @@ func (b *BPF) Parse() *bpf.Config {
 		NetworkBufferSize: b.NetworkBufferSize,
 		CgroupPath:        b.CgroupPath,
 	}
+}
+
+// Databases represents the database proxy service configuration.
+//
+// In the configuration file this section will be "db_service".
+type Databases struct {
+	// Service contains common service fields.
+	Service `yaml:",inline"`
+	// Databases is a list of databases proxied by the service.
+	Databases []*Database `yaml:"databases"`
+}
+
+// Database represents a single database proxied by the service.
+type Database struct {
+	// Name is the name for the database proxy service.
+	Name string `yaml:"name"`
+	// Kind is the database type e.g. "postgres" or "mysql".
+	Kind string `yaml:"kind"`
+	// Address is the database address to connect to.
+	Address string `yaml:"address"`
+	// TODO(r0mant): Add static/dynamic labels.
+}
+
+// Check validates the database proxy configuration.
+func (d *Database) Check() error {
+	if d.Name == "" {
+		return trace.BadParameter("missing database name")
+	}
+	// TODO(r0mant): Check that kind is supported (postgres).
+	if d.Kind == "" {
+		return trace.BadParameter("missing %q database kind", d.Name)
+	}
+	// TODO(r0mant): Validate the address.
+	if d.Address == "" {
+		return trace.BadParameter("missing %q database address", d.Name)
+	}
+	return nil
 }
 
 // Apps represents the configuration for the collection of applications this

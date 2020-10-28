@@ -70,6 +70,7 @@ import (
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/srv"
 	"github.com/gravitational/teleport/lib/srv/app"
+	"github.com/gravitational/teleport/lib/srv/db"
 	"github.com/gravitational/teleport/lib/srv/regular"
 	"github.com/gravitational/teleport/lib/system"
 	"github.com/gravitational/teleport/lib/utils"
@@ -104,6 +105,10 @@ const (
 	// service has been registered with the Auth Server.
 	AppsIdentityEvent = "AppsIdentity"
 
+	// DatabasesIdentityEvent is generated when the identity of the database
+	// proxy service has been registered with the auth server.
+	DatabasesIdentityEvent = "DatabasesIdentity"
+
 	// AuthTLSReady is generated when the Auth Server has initialized the
 	// TLS Mutual Auth endpoint and is ready to start accepting connections.
 	AuthTLSReady = "AuthTLSReady"
@@ -136,6 +141,10 @@ const (
 	// AppsReady is generated when the Teleport app proxy service is ready to
 	// start accepting connections.
 	AppsReady = "AppsReady"
+
+	// DatabasesReady is generated when the Teleport database proxy service
+	// is ready to start accepting connections.
+	DatabasesReady = "DatabasesReady"
 
 	// TeleportExitEvent is generated when the Teleport process begins closing
 	// all listening sockets and exiting.
@@ -708,6 +717,13 @@ func NewTeleport(cfg *Config) (*TeleportProcess, error) {
 		serviceStarted = true
 	} else {
 		warnOnErr(process.closeImportedDescriptors(teleport.ComponentApp))
+	}
+
+	if cfg.Databases.Enabled {
+		process.initDatabases()
+		serviceStarted = true
+	} else {
+		warnOnErr(process.closeImportedDescriptors(teleport.ComponentDB))
 	}
 
 	process.RegisterFunc("common.rotate", process.periodicSyncRotationState)
@@ -2596,6 +2612,160 @@ var appDependEvents = []string{
 	ProxyReverseTunnelReady,
 }
 
+func (process *TeleportProcess) initDatabases() {
+	if len(process.Config.Databases.Databases) == 0 {
+		return
+	}
+
+	process.registerWithAuthServer(teleport.RoleDatabase, DatabasesIdentityEvent)
+	eventsCh := make(chan Event)
+	process.WaitForEvent(process.ExitContext(), DatabasesIdentityEvent, eventsCh)
+
+	log := logrus.WithField(trace.Component, teleport.Component(
+		teleport.ComponentDB, process.id))
+
+	var dbServer *db.Server
+	var agentPool *reversetunnel.AgentPool
+
+	process.RegisterCriticalFunc("databases.start", func() error {
+		var event Event
+
+		select {
+		case event = <-eventsCh:
+			log.Debugf("Received event %q.", event.Name)
+		case <-process.ExitContext().Done():
+			log.Debugf("Process is exiting.")
+			return nil
+		}
+
+		conn, ok := (event.Payload).(*Connector)
+		if !ok {
+			return trace.BadParameter("unsupported event payload type %q", event.Payload)
+		}
+
+		var tunnelAddr string
+		if conn.TunnelProxy() != "" {
+			tunnelAddr = conn.TunnelProxy()
+		} else {
+			if tunnelAddr, ok = process.singleProcessMode(); !ok {
+				return trace.BadParameter(`failed to find reverse tunnel address, if running in single process mode, make sure "auth_service", "proxy_service", and "app_service" are all enabled`)
+			}
+			// TODO(r0mant): Apps here also block and wait for all dependencies
+			// to start before starting.
+		}
+
+		accessPoint, err := process.newLocalCache(conn.Client, cache.ForDatabases, []string{teleport.ComponentDB})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		// ====
+		// TODO(r0mant): Apps service also starts uploader service here.
+		// ====
+
+		// Loop over each database and create a server.
+		var databases []*services.Database
+		for _, database := range process.Config.Databases.Databases {
+			databases = append(databases, &services.Database{
+				Name: database.Name,
+				Kind: database.Kind,
+				URI:  database.Address,
+			})
+		}
+
+		server := &services.ServerV2{
+			Kind:    services.KindDatabaseServer,
+			Version: services.V2,
+			Metadata: services.Metadata{
+				Namespace: defaults.Namespace,
+				Name:      process.Config.HostUUID,
+			},
+			Spec: services.ServerSpecV2{
+				Hostname:  process.Config.Hostname,
+				Version:   teleport.Version,
+				Databases: databases,
+			},
+		}
+
+		authorizer, err := auth.NewAuthorizer(conn.Client, conn.Client, conn.Client)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		tlsConfig, err := conn.ServerIdentity.TLSConfig(nil)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		dbServer, err = db.New(process.ExitContext(), &db.Config{
+			DataDir:      process.Config.DataDir,
+			AuthClient:   conn.Client,
+			AccessPoint:  accessPoint,
+			Authorizer:   authorizer,
+			TLSConfig:    tlsConfig,
+			CipherSuites: process.Config.CipherSuites,
+			GetRotation:  process.getRotation,
+			Server:       server,
+			OnHeartbeat: func(err error) {
+				if err != nil {
+					process.BroadcastEvent(Event{Name: TeleportDegradedEvent, Payload: teleport.ComponentDB})
+				} else {
+					process.BroadcastEvent(Event{Name: TeleportOKEvent, Payload: teleport.ComponentDB})
+				}
+			},
+		})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		// Start the database server which will also start the heartbeat
+		// and dynamic labels update.
+		dbServer.Start()
+
+		// Create and start an agent pool.
+		agentPool, err = reversetunnel.NewAgentPool(process.ExitContext(),
+			reversetunnel.AgentPoolConfig{
+				Component:   teleport.ComponentDB,
+				HostUUID:    conn.ServerIdentity.ID.HostUUID,
+				ProxyAddr:   tunnelAddr,
+				Client:      conn.Client,
+				Server:      dbServer,
+				AccessPoint: conn.Client,
+				HostSigner:  conn.ServerIdentity.KeySigner,
+				Cluster:     conn.ServerIdentity.Cert.Extensions[utils.CertExtensionAuthority],
+			})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		err = agentPool.Start()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		process.BroadcastEvent(Event{Name: DatabasesReady, Payload: nil})
+		log.Info("All databases successfully started.")
+
+		// Block and wait while the server and agent pool are running.
+		if err := dbServer.Wait(); err != nil {
+			return trace.Wrap(err)
+		}
+		agentPool.Wait()
+
+		return nil
+	})
+
+	// Execute this when the process running database proxy service exits.
+	process.onExit("databases.stop", func(payload interface{}) {
+		log.Info("Shutting down.")
+		if dbServer != nil {
+			warnOnErr(dbServer.Close())
+		}
+		if agentPool != nil {
+			agentPool.Stop()
+		}
+		log.Info("Exited.")
+	})
+}
+
 func (process *TeleportProcess) initApps() {
 	// If no applications are specified, exit early. This is due to the strange
 	// behavior in reading file configuration. If the user does not specify an
@@ -2932,9 +3102,9 @@ func (process *TeleportProcess) Close() error {
 }
 
 func validateConfig(cfg *Config) error {
-	if !cfg.Auth.Enabled && !cfg.SSH.Enabled && !cfg.Proxy.Enabled && !cfg.Apps.Enabled {
+	if !cfg.Auth.Enabled && !cfg.SSH.Enabled && !cfg.Proxy.Enabled && !cfg.Apps.Enabled && !cfg.Databases.Enabled {
 		return trace.BadParameter(
-			"config: supply at least one of Auth, SSH, Proxy, or App roles")
+			"config: supply at least one of Auth, SSH, Proxy, App or Database roles")
 	}
 
 	if cfg.DataDir == "" {

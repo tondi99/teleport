@@ -272,6 +272,12 @@ func Run(args []string) {
 	lsApps.Flag("verbose", "Show extra application fields.").Short('v').BoolVar(&cf.Verbose)
 	lsApps.Flag("cluster", clusterHelp).Envar(clusterEnvVar).StringVar(&cf.SiteName)
 
+	// Databases.
+	db := app.Command("db", "View and control proxied databases.")
+	lsDB := db.Command("ls", "List all registered databases.")
+	lsDB.Flag("verbose", "Show extra database fields.").Short('v').BoolVar(&cf.Verbose)
+	lsDB.Flag("cluster", clusterHelp).Envar(clusterEnvVar).StringVar(&cf.SiteName)
+
 	// join
 	join := app.Command("join", "Join the active SSH session")
 	join.Flag("cluster", clusterHelp).Envar(clusterEnvVar).StringVar(&cf.SiteName)
@@ -408,6 +414,8 @@ func Run(args []string) {
 		onStatus(&cf)
 	case lsApps.FullCommand():
 		onApps(&cf)
+	case lsDB.FullCommand():
+		onDatabases(&cf)
 	}
 }
 
@@ -1609,4 +1617,36 @@ func onApps(cf *CLIConf) {
 	})
 
 	showApps(servers, cf.Verbose)
+}
+
+func onDatabases(cf *CLIConf) {
+	tc, err := makeClient(cf, false)
+	if err != nil {
+		utils.FatalError(err)
+	}
+	var servers []services.Server
+	err = client.RetryWithRelogin(cf.Context, tc, func() error {
+		servers, err = tc.ListDatabaseServers(cf.Context)
+		return trace.Wrap(err)
+	})
+	if err != nil {
+		utils.FatalError(err)
+	}
+	sort.Slice(servers, func(i, j int) bool {
+		return servers[i].GetName() < servers[j].GetName()
+	})
+	showDatabases(servers, cf.Verbose)
+}
+
+func showDatabases(servers []services.Server, verbose bool) {
+	// TODO(r0mant): Add verbose mode, add labels like Apps have.
+	t := asciitable.MakeTable([]string{"Name", "Protocol", "Address"})
+	for _, server := range servers {
+		for _, db := range server.GetDatabases() {
+			t.AddRow([]string{
+				db.Name, db.Kind, db.URI,
+			})
+		}
+	}
+	fmt.Println(t.AsBuffer().String())
 }

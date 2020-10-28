@@ -46,6 +46,9 @@ type Announcer interface {
 
 	// UpsertAppServer adds an application server.
 	UpsertAppServer(context.Context, services.Server) (*services.KeepAlive, error)
+
+	// UpsertDatabaseServer registers a database proxy server.
+	UpsertDatabaseServer(context.Context, services.Server) (*services.KeepAlive, error)
 }
 
 // ReadAccessPoint is an API interface implemented by a certificate authority (CA)
@@ -109,6 +112,9 @@ type ReadAccessPoint interface {
 
 	// GetAppSession gets an application web session.
 	GetAppSession(context.Context, services.GetAppSessionRequest) (services.WebSession, error)
+
+	// GetDatabaseServers returns all registered database proxy servers.
+	GetDatabaseServers(ctx context.Context, namespace string, opts ...services.MarshalOption) ([]services.Server, error)
 }
 
 // AccessPoint is an API interface implemented by a certificate authority (CA)
@@ -253,6 +259,11 @@ func (w *Wrapper) DeleteSemaphore(ctx context.Context, filter services.Semaphore
 // UpsertAppServer adds an application server.
 func (w *Wrapper) UpsertAppServer(ctx context.Context, server services.Server) (*services.KeepAlive, error) {
 	return w.NoCache.UpsertAppServer(ctx, server)
+}
+
+// UpsertDatabaseServer registers a database proxy server.
+func (w *Wrapper) UpsertDatabaseServer(ctx context.Context, server services.Server) (*services.KeepAlive, error) {
+	return w.NoCache.UpsertDatabaseServer(ctx, server)
 }
 
 // NewCachingAcessPoint returns new caching access point using

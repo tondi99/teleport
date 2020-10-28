@@ -608,6 +608,9 @@ func (s *server) handleHeartbeat(conn net.Conn, sconn *ssh.ServerConn, nch ssh.N
 	// App is dialing back.
 	case string(teleport.RoleApp):
 		s.handleNewNode(conn, sconn, nch, services.AppTunnel)
+	// Database proxy is dialing back.
+	case string(teleport.RoleDatabase):
+		s.handleNewNode(conn, sconn, nch, services.DatabaseTunnel)
 	// Proxy is dialing back.
 	case string(teleport.RoleProxy):
 		s.handleNewCluster(conn, sconn, nch)

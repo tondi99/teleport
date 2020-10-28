@@ -128,6 +128,9 @@ const (
 	// ComponentApp is the application proxy service.
 	ComponentApp = "app:service"
 
+	// ComponentDB is the database proxy service.
+	ComponentDB = "db:service"
+
 	// ComponentAppProxy is the application handler within the web proxy service.
 	ComponentAppProxy = "app:web"
 
@@ -686,6 +689,8 @@ const (
 	KeepAliveNode = "node"
 	// KeepAliveApp is the keep alive type for application server.
 	KeepAliveApp = "app"
+	// KeepAliveDatabase is the keep alive type for database server.
+	KeepAliveDatabase = "db"
 )
 
 const (

@@ -77,7 +77,7 @@ type HeartbeatMode int
 // CheckAndSetDefaults checks values and sets defaults
 func (h HeartbeatMode) CheckAndSetDefaults() error {
 	switch h {
-	case HeartbeatModeNode, HeartbeatModeProxy, HeartbeatModeAuth, HeartbeatModeApp:
+	case HeartbeatModeNode, HeartbeatModeProxy, HeartbeatModeAuth, HeartbeatModeApp, HeartbeatModeDB:
 		return nil
 	default:
 		return trace.BadParameter("unrecognized mode")
@@ -95,6 +95,8 @@ func (h HeartbeatMode) String() string {
 		return "Auth"
 	case HeartbeatModeApp:
 		return "App"
+	case HeartbeatModeDB:
+		return "Database"
 	default:
 		return fmt.Sprintf("<unknown: %v>", int(h))
 	}
@@ -112,6 +114,8 @@ const (
 	HeartbeatModeAuth HeartbeatMode = iota
 	// HeartbeatModeApp sets heartbeat to apps and will use keep alives.
 	HeartbeatModeApp HeartbeatMode = iota
+	// HeartbeatModeDB sets heatbeat to db
+	HeartbeatModeDB HeartbeatMode = iota
 )
 
 // NewHeartbeat returns a new instance of heartbeat
@@ -407,6 +411,23 @@ func (h *Heartbeat) announce() error {
 			return nil
 		case HeartbeatModeApp:
 			keepAlive, err := h.Announcer.UpsertAppServer(h.cancelCtx, h.current)
+			if err != nil {
+				return trace.Wrap(err)
+			}
+			h.notifySend()
+			keepAliver, err := h.Announcer.NewKeepAliver(h.cancelCtx)
+			if err != nil {
+				h.reset(HeartbeatStateInit)
+				return trace.Wrap(err)
+			}
+			h.nextAnnounce = h.Clock.Now().UTC().Add(h.AnnouncePeriod)
+			h.nextKeepAlive = h.Clock.Now().UTC().Add(h.KeepAlivePeriod)
+			h.keepAlive = keepAlive
+			h.keepAliver = keepAliver
+			h.setState(HeartbeatStateKeepAliveWait)
+			return nil
+		case HeartbeatModeDB:
+			keepAlive, err := h.Announcer.UpsertDatabaseServer(h.cancelCtx, h.current)
 			if err != nil {
 				return trace.Wrap(err)
 			}

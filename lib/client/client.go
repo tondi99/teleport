@@ -257,6 +257,19 @@ func (proxy *ProxyClient) GetAppServers(ctx context.Context, namespace string) (
 	return servers, nil
 }
 
+// GetDatabaseServers returns all registered database proxy servers.
+func (proxy *ProxyClient) GetDatabaseServers(ctx context.Context, namespace string) ([]services.Server, error) {
+	authClient, err := proxy.CurrentClusterAccessPoint(ctx, false)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	servers, err := authClient.GetDatabaseServers(ctx, namespace, services.SkipValidation())
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return servers, nil
+}
+
 // CurrentClusterAccessPoint returns cluster access point to the currently
 // selected cluster and is used for discovery
 // and could be cached based on the access policy

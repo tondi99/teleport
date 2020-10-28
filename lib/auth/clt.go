@@ -2928,6 +2928,80 @@ func (c *Client) DeleteSemaphore(ctx context.Context, filter services.SemaphoreF
 	return nil
 }
 
+// GetDatabaseServers returns all registered database proxy servers.
+func (c *Client) GetDatabaseServers(ctx context.Context, namespace string, opts ...services.MarshalOption) ([]services.Server, error) {
+	clt, err := c.grpc()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	cfg, err := services.CollectOptions(opts)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	resp, err := clt.GetDatabaseServers(ctx, &proto.GetDatabaseServersRequest{
+		Namespace:      namespace,
+		SkipValidation: cfg.SkipValidation,
+	})
+	if err != nil {
+		return nil, trail.FromGRPC(err)
+	}
+	var servers []services.Server
+	for _, server := range resp.GetServers() {
+		servers = append(servers, server)
+	}
+	return servers, nil
+}
+
+// UpsertDatabaseServer registers a new database proxy server.
+func (c *Client) UpsertDatabaseServer(ctx context.Context, server services.Server) (*services.KeepAlive, error) {
+	clt, err := c.grpc()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	s, ok := server.(*services.ServerV2)
+	if !ok {
+		return nil, trace.BadParameter("invalid type %T", server)
+	}
+	keepAlive, err := clt.UpsertDatabaseServer(ctx, &proto.UpsertDatabaseServerRequest{
+		Server: s,
+	})
+	if err != nil {
+		return nil, trail.FromGRPC(err)
+	}
+	return keepAlive, nil
+}
+
+// DeleteDatabaseServer removes the specified database proxy server.
+func (c *Client) DeleteDatabaseServer(ctx context.Context, namespace string, name string) error {
+	clt, err := c.grpc()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	_, err = clt.DeleteDatabaseServer(ctx, &proto.DeleteDatabaseServerRequest{
+		Namespace: namespace,
+		Name:      name,
+	})
+	if err != nil {
+		return trail.FromGRPC(err)
+	}
+	return nil
+}
+
+// DeleteAllDatabaseServers removes all registered database proxy servers.
+func (c *Client) DeleteAllDatabaseServers(ctx context.Context, namespace string) error {
+	clt, err := c.grpc()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	_, err = clt.DeleteAllDatabaseServers(ctx, &proto.DeleteAllDatabaseServersRequest{
+		Namespace: namespace,
+	})
+	if err != nil {
+		return trail.FromGRPC(err)
+	}
+	return nil
+}
+
 // GetAppServers gets all application servers.
 func (c *Client) GetAppServers(ctx context.Context, namespace string, opts ...services.MarshalOption) ([]services.Server, error) {
 	clt, err := c.grpc()

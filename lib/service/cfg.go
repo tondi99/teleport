@@ -90,6 +90,9 @@ type Config struct {
 	// App service configuration. Manages applications running within the cluster.
 	Apps AppsConfig
 
+	// Databases proxy service configuration.
+	Databases DatabasesConfig
+
 	// Keygen points to a key generator implementation
 	Keygen sshca.Authority
 
@@ -503,6 +506,24 @@ type KubeConfig struct {
 	DynamicLabels services.CommandLabels
 }
 
+// DatabasesConfig configures the database proxy service.
+type DatabasesConfig struct {
+	// Enabled enables the database proxy service.
+	Enabled bool
+	// Database is a list of databases proxied by this service.
+	Databases []Database
+}
+
+// Database represents a single database that's being proxied.
+type Database struct {
+	// Name is the database name, used to refer to in CLI.
+	Name string
+	// Kind is the database type, e.g. postgres or mysql.
+	Kind string
+	// Address is the database address.
+	Address string
+}
+
 // AppsConfig configures application proxy service.
 type AppsConfig struct {
 	// Enabled enables application proxying service.
@@ -625,6 +646,9 @@ func ApplyDefaults(cfg *Config) {
 
 	// Apps service defaults. It's disabled by default.
 	cfg.Apps.Enabled = false
+
+	// Databases proxy service is disabled by default.
+	cfg.Databases.Enabled = false
 }
 
 // ApplyFIPSDefaults updates default configuration to be FedRAMP/FIPS 140-2

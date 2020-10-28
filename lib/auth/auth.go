@@ -1766,6 +1766,11 @@ func (a *Server) GetAppSession(ctx context.Context, req services.GetAppSessionRe
 	return a.GetCache().GetAppSession(ctx, req)
 }
 
+// GetDatabaseServers returns all registers database proxy servers.
+func (a *Server) GetDatabaseServers(ctx context.Context, namespace string, opts ...services.MarshalOption) ([]services.Server, error) {
+	return a.GetCache().GetDatabaseServers(ctx, namespace, opts...)
+}
+
 // authKeepAliver is a keep aliver using auth server directly
 type authKeepAliver struct {
 	sync.RWMutex

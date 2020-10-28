@@ -64,6 +64,7 @@ var DefaultImplicitRules = []Rule{
 	NewRule(KindClusterName, RO()),
 	NewRule(KindSSHSession, RO()),
 	NewRule(KindAppServer, RO()),
+	NewRule(KindDatabaseServer, RO()),
 }
 
 // DefaultCertAuthorityRules provides access the minimal set of resources
@@ -272,6 +273,8 @@ type Role interface {
 	GetAppLabels(RoleConditionType) Labels
 	// SetAppLabels sets the map of app labels this role is allowed or denied access to.
 	SetAppLabels(RoleConditionType, Labels)
+
+	// TODO(r0mant): Add DatabaseLabels.
 
 	// GetRules gets all allow or deny rules.
 	GetRules(rct RoleConditionType) []Rule
@@ -1406,6 +1409,9 @@ type AccessChecker interface {
 
 	// CheckAccessToApp checks access to an application.
 	CheckAccessToApp(string, *App) error
+
+	// CheckAccessToDatabase checks access to the specified database.
+	CheckAccessToDatabase(string, *Database) error
 }
 
 // FromSpec returns new RoleSet created from spec
@@ -1856,6 +1862,12 @@ func (set RoleSet) CheckAccessToServer(login string, s Server) error {
 		}).Debugf("Access to node %v denied, no allow rule matched; %v", s.GetHostname(), errs)
 	}
 	return trace.AccessDenied("access to server denied")
+}
+
+// CheckAccessToDatabase checks is a role has access to the specified database.
+func (set RoleSet) CheckAccessToDatabase(namespace string, database *Database) error {
+	// TODO(r0mant): Implement this.
+	return nil
 }
 
 // CheckAccessToApp checks if a role has access to an application. Deny rules
