@@ -33,6 +33,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync"
@@ -3960,7 +3961,9 @@ func waitForReload(serviceC chan *service.TeleportProcess, old *service.Teleport
 		}()
 		select {
 		case <-ctx.Done():
-		case <-time.After(60 * time.Second):
+		case <-time.After(1 * time.Minute):
+			// FIXME: dump goroutines for debugging
+			pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
 			return nil, trace.BadParameter("timeout waiting for old service to stop")
 		}
 	}
