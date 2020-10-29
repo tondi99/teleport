@@ -89,7 +89,7 @@ func InitLogger(purpose LoggingPurpose, level log.Level, verbose ...bool) {
 }
 
 func InitLoggerForTests(verbose ...bool) {
-	InitLogger(LoggingForTests, log.DebugLevel, verbose...)
+	InitLogger(LoggingForTests, log.InfoLevel, verbose...)
 }
 
 // FatalError is for CLI front-ends: it detects gravitational/trace debugging
