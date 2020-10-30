@@ -826,10 +826,16 @@ type Databases struct {
 type Database struct {
 	// Name is the name for the database proxy service.
 	Name string `yaml:"name"`
-	// Kind is the database type e.g. "postgres" or "mysql".
-	Kind string `yaml:"kind"`
+	// Protocol is the database type e.g. "postgres" or "mysql".
+	Protocol string `yaml:"protocol"`
 	// Address is the database address to connect to.
 	Address string `yaml:"address"`
+	// CAPath is the path to the database CA certificate.
+	CAPath string `yaml:"ca_path"`
+	// CertPath is the path to the client certificate.
+	CertPath string `yaml:"cert_path"`
+	// KeyPath is the path to the client key.
+	KeyPath string `yaml:"key_path"`
 	// TODO(r0mant): Add static/dynamic labels.
 }
 
@@ -839,7 +845,7 @@ func (d *Database) Check() error {
 		return trace.BadParameter("missing database name")
 	}
 	// TODO(r0mant): Check that kind is supported (postgres).
-	if d.Kind == "" {
+	if d.Protocol == "" {
 		return trace.BadParameter("missing %q database kind", d.Name)
 	}
 	// TODO(r0mant): Validate the address.

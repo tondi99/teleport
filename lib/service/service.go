@@ -22,6 +22,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -2114,6 +2115,7 @@ type proxyListeners struct {
 	web           net.Listener
 	reverseTunnel net.Listener
 	kube          net.Listener
+	db            net.Listener
 }
 
 func (l *proxyListeners) Close() {
@@ -2128,6 +2130,9 @@ func (l *proxyListeners) Close() {
 	}
 	if l.kube != nil {
 		l.kube.Close()
+	}
+	if l.db != nil {
+		l.db.Close()
 	}
 }
 
@@ -2190,6 +2195,7 @@ func (process *TeleportProcess) setupProxyListeners() (*proxyListeners, error) {
 			return nil, trace.Wrap(err)
 		}
 		listeners.web = listeners.mux.TLS()
+		listeners.db = listeners.mux.DB() // TODO(r0mant): Do this in other branches too.
 		listeners.reverseTunnel, err = process.importOrCreateListener(listenerProxyTunnel, cfg.Proxy.ReverseTunnelListenAddr.Addr)
 		if err != nil {
 			listener.Close()
@@ -2527,6 +2533,33 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 		})
 	}
 
+	// Start the database proxy server that will be accepting connections
+	// from the database clients (such as psql or mysql), authenticating
+	// and authorizing them, and then routing them to a respective database
+	// server over the reverse tunnel framework.
+	if listeners.db != nil {
+		log := logrus.WithField(trace.Component, teleport.Component(teleport.ComponentDB))
+		tlsConfig, err := conn.ServerIdentity.TLSConfig(nil)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		dbProxyServer, err := db.NewProxyServer(db.ProxyServerConfig{
+			AccessPoint: accessPoint,
+			Tunnel:      tsrv,
+			TLSConfig:   tlsConfig,
+		})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		process.RegisterCriticalFunc("proxy.db", func() error {
+			log.Infof("Starting Database proxy server on %v.", cfg.Proxy.WebAddr.Addr)
+			if err := dbProxyServer.Serve(listeners.db); err != nil {
+				log.WithError(err).Warn("Database proxy server exited with error.")
+			}
+			return nil
+		})
+	}
+
 	// execute this when process is asked to exit:
 	process.onExit("proxy.shutdown", func(payload interface{}) {
 		rcWatcher.Close()
@@ -2667,9 +2700,12 @@ func (process *TeleportProcess) initDatabases() {
 		var databases []*services.Database
 		for _, database := range process.Config.Databases.Databases {
 			databases = append(databases, &services.Database{
-				Name: database.Name,
-				Kind: database.Kind,
-				URI:  database.Address,
+				Name:     database.Name,
+				Protocol: database.Protocol,
+				Address:  database.Address,
+				CACert:   base64.StdEncoding.EncodeToString(database.CACert),
+				Cert:     base64.StdEncoding.EncodeToString(database.Cert),
+				Key:      base64.StdEncoding.EncodeToString(database.Key),
 			})
 		}
 

@@ -1644,7 +1644,7 @@ func showDatabases(servers []services.Server, verbose bool) {
 	for _, server := range servers {
 		for _, db := range server.GetDatabases() {
 			t.AddRow([]string{
-				db.Name, db.Kind, db.URI,
+				db.Name, db.Protocol, db.Address,
 			})
 		}
 	}

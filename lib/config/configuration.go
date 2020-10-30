@@ -117,6 +117,12 @@ type CommandLineFlags struct {
 	DatabaseKind string
 	// DatabaseAddress is the address to connect to the proxied database.
 	DatabaseAddress string
+	// DatabaseCAPath is the database CA cert path.
+	DatabaseCAPath string
+	// DatabaseCertPath is the client cert path.
+	DatabaseCertPath string
+	// DatabaseKeyPath is the client key path.
+	DatabaseKeyPath string
 }
 
 // readConfigFile reads /etc/teleport.yaml (or whatever is passed via --config flag)
@@ -740,12 +746,27 @@ func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
 		if err := database.Check(); err != nil {
 			return trace.Wrap(err)
 		}
-		// TODO(r0mant): Parse static/dynamic labels like apps below.
+		caBytes, err := ioutil.ReadFile(database.CAPath)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		certBytes, err := ioutil.ReadFile(database.CertPath)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		keyBytes, err := ioutil.ReadFile(database.KeyPath)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		// TODO(r0mant): Also parse static/dynamic labels like apps below.
 		cfg.Databases.Databases = append(cfg.Databases.Databases,
 			service.Database{
-				Name:    database.Name,
-				Kind:    database.Kind,
-				Address: database.Address,
+				Name:     database.Name,
+				Protocol: database.Protocol,
+				Address:  database.Address,
+				CACert:   caBytes,
+				Cert:     certBytes,
+				Key:      keyBytes,
 			})
 	}
 	return nil
@@ -1054,9 +1075,12 @@ func Configure(clf *CommandLineFlags, cfg *service.Config) error {
 			},
 			Databases: []*Database{
 				{
-					Name:    clf.DatabaseName,
-					Kind:    clf.DatabaseKind,
-					Address: clf.DatabaseAddress,
+					Name:     clf.DatabaseName,
+					Protocol: clf.DatabaseKind,
+					Address:  clf.DatabaseAddress,
+					CAPath:   clf.DatabaseCAPath,
+					CertPath: clf.DatabaseCertPath,
+					KeyPath:  clf.DatabaseKeyPath,
 				},
 			},
 		}

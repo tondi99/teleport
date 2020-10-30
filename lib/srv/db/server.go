@@ -19,6 +19,9 @@ package db
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -32,6 +35,8 @@ import (
 	"github.com/gravitational/teleport/lib/utils"
 
 	"github.com/gravitational/trace"
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgproto3/v2"
 	"github.com/jonboulle/clockwork"
 	"github.com/sirupsen/logrus"
 )
@@ -141,6 +146,9 @@ func New(ctx context.Context, c *Config) (*Server, error) {
 		server: c.Server,
 	}
 
+	s.c.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	s.c.TLSConfig.GetConfigForClient = s.getConfigForClient
+
 	s.closeContext, s.closeFunc = context.WithCancel(ctx)
 
 	// Create heartbeat loop so applications keep sending presence to backend.
@@ -239,8 +247,190 @@ func (s *Server) ForceHeartbeat() error {
 	return nil
 }
 
-// HandleConnection takes a connection and wraps it in a listener so it can
-// be passed to http.Serve to process as a HTTP request.
+// HandleConnection ...
 func (s *Server) HandleConnection(conn net.Conn) {
-	s.log.Infof("HandleConnection(%#v)", conn)
+	s.log.Debugf("HandleConnection(%#v)", conn)
+	if err := s.handleConnection(conn); err != nil {
+		s.log.WithError(err).Error("Failed to handle connection")
+	}
+	return
+	listener := newListener(context.TODO(), conn)
+	tlsListener := tls.NewListener(listener, s.c.TLSConfig)
+	for {
+		conn, err := tlsListener.Accept()
+		if err != nil {
+			s.log.WithError(err).Error("Failed to accept connection")
+			continue
+		}
+		s.log.Debugf("Accepted connection from %v", conn.RemoteAddr())
+		go func() {
+			if err := s.handleConnection(conn); err != nil {
+				s.log.WithError(err).Error("Failed to handle connection")
+			}
+		}()
+	}
+}
+
+func (s *Server) handleConnection(conn net.Conn) error {
+	backend := pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn)
+
+	s.log.Debug("Waiting for startup message")
+	startupMessageI, err := backend.ReceiveStartupMessage()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	s.log.Debugf("Received startup message: %#v.", startupMessageI)
+
+	startupMessage, ok := startupMessageI.(*pgproto3.StartupMessage)
+	if !ok {
+		return trace.BadParameter("expected *pgproto3.StartupMessage, got %T", startupMessageI)
+	}
+
+	// TODO(r0mant): Extract database from identity.
+	database := s.server.GetDatabases()[0]
+	s.log.Debugf("Will connect to database %#v", database)
+
+	// Dial the database.
+	connString := fmt.Sprintf("postgres://%s@%s/?database=%s&sslmode=verify-ca",
+		startupMessage.Parameters["user"],
+		database.Address,
+		startupMessage.Parameters["database"])
+	connectConfig, err := pgconn.ParseConfig(connString)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	caCertPool := x509.NewCertPool()
+	caCertBytes, err := base64.StdEncoding.DecodeString(database.CACert)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	certBytes, err := base64.StdEncoding.DecodeString(database.Cert)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	keyBytes, err := base64.StdEncoding.DecodeString(database.Key)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	if !caCertPool.AppendCertsFromPEM(caCertBytes) {
+		return trace.BadParameter("failed to append ca pem")
+	}
+	clientCert, err := tls.X509KeyPair(certBytes, keyBytes)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	addr, err := utils.ParseAddr(database.Address)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	connectConfig.TLSConfig = &tls.Config{
+		Certificates: []tls.Certificate{clientCert},
+		RootCAs:      caCertPool,
+		ServerName:   addr.Host(),
+	}
+
+	// Connect to the backend database.
+	frontendConn, err := pgconn.ConnectConfig(context.TODO(), connectConfig)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(frontendConn.Conn()), frontendConn.Conn())
+
+	s.log.Debug("Sending AuthenticationOk")
+	if err := backend.Send(&pgproto3.AuthenticationOk{}); err != nil {
+		return trace.Wrap(err)
+	}
+	s.log.Debug("Sent AuthenticationOk")
+
+	s.log.Debug("Sending ReadyForQuery")
+	if err := backend.Send(&pgproto3.ReadyForQuery{}); err != nil {
+		return trace.Wrap(err)
+	}
+	s.log.Debug("Sent ReadyForQuery")
+
+	go func() {
+		log := s.log.WithField(trace.Component, "backend")
+		defer log.Debug("Exited.")
+		for {
+			log.Debug("Receiving message")
+			message, err := backend.Receive()
+			if err != nil {
+				log.WithError(err).Error("Failed to receive message from client")
+				return
+			}
+			log.Debugf("Received message: %#v", message)
+			switch msg := message.(type) {
+			case *pgproto3.Query:
+				log.Infof("---> Executing query %q", msg.String)
+			case *pgproto3.Terminate:
+				log.Infof("---> Session terminated")
+			}
+			err = frontend.Send(message)
+			if err != nil {
+				log.WithError(err).Error("Failed to send message from client to server")
+				return
+			}
+			log.Debug("Sent message")
+		}
+	}()
+
+	log := s.log.WithField(trace.Component, "frontend")
+	defer log.Debug("Exited.")
+	for {
+		log.Debug("Receiving message")
+		message, err := frontend.Receive()
+		if err != nil {
+			log.WithError(err).Error("Failed to receive message from server")
+			continue
+		}
+		log.Debugf("Received message: %#v", message)
+		switch msg := message.(type) {
+		case *pgproto3.ErrorResponse:
+			log.Warnf("<--- Query completed with error %q", msg.Message)
+		case *pgproto3.DataRow:
+			log.Infof("<--- Query returned data row with %v columns", len(msg.Values))
+		case *pgproto3.CommandComplete:
+			log.Infof("<--- Query completed")
+		}
+		err = backend.Send(message)
+		if err != nil {
+			log.WithError(err).Error("Failed to send message from server to client")
+			continue
+		}
+		log.Debug("Sent message")
+	}
+
+	// tlsConn, ok := conn.(*tls.Conn)
+	// if !ok {
+	// 	return trace.BadParameter("expected tls.Conn, got %T", conn)
+	// }
+	// err := tlsConn.Handshake()
+	// if err != nil {
+	// 	return trace.Wrap(err)
+	// }
+	// s.log.Debugf("%#v", tlsConn.ConnectionState())
+	return nil
+}
+
+// getConfigForClient returns TLS config with a list of certificate authorities
+// that could have signed the client certificate.
+//
+// TODO(r0mant): Get rid of copy-pasta.
+func (s *Server) getConfigForClient(info *tls.ClientHelloInfo) (*tls.Config, error) {
+	var clusterName string
+	var err error
+	if info.ServerName != "" {
+		clusterName, err = auth.DecodeClusterName(info.ServerName)
+		if err != nil && !trace.IsNotFound(err) {
+			s.log.Debugf("Ignoring unsupported cluster name %q.", info.ServerName)
+		}
+	}
+	pool, err := auth.ClientCertPool(s.c.AccessPoint, clusterName)
+	if err != nil {
+		s.log.WithError(err).Error("Failed to retrieve client CA pool.")
+		return nil, nil // Fall back to the default config.
+	}
+	tlsCopy := s.c.TLSConfig.Clone()
+	tlsCopy.ClientCAs = pool
+	return tlsCopy, nil
 }

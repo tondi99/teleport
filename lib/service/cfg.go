@@ -518,10 +518,16 @@ type DatabasesConfig struct {
 type Database struct {
 	// Name is the database name, used to refer to in CLI.
 	Name string
-	// Kind is the database type, e.g. postgres or mysql.
-	Kind string
+	// Protocol is the database type, e.g. postgres or mysql.
+	Protocol string
 	// Address is the database address.
 	Address string
+	// CACert is the database CA certificate.
+	CACert []byte
+	// Cert is the client certificate.
+	Cert []byte
+	// Key is the client key.
+	Key []byte
 }
 
 // AppsConfig configures application proxy service.

@@ -480,18 +480,6 @@ const ServerSpecV2Schema = `{
     "addr": {"type": "string"},
     "protocol": {"type": "integer"},
     "public_addr": {"type": "string"},
-    "databases": {
-      "type": ["array"],
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "name": {"type": "string"},
-          "kind": {"type": "string"},
-          "uri": {"type": "string"}
-        }
-      }
-    },
     "apps":  {
       "type": ["array"],
       "items": {
@@ -535,6 +523,21 @@ const ServerSpecV2Schema = `{
         }
       }
     },
+    "databases": {
+		"type": ["array"],
+		"items": {
+		  "type": "object",
+		  "additionalProperties": false,
+		  "properties": {
+			"name": {"type": "string"},
+			"protocol": {"type": "string"},
+			"address": {"type": "string"},
+			"ca_cert": {"type": "string"},
+			"cert": {"type": "string"},
+			"key": {"type": "string"}
+		  }
+		}
+	  },
     "hostname": {"type": "string"},
     "use_tunnel": {"type": "boolean"},
     "labels": {

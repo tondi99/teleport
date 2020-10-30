@@ -201,14 +201,20 @@ message Rewrite {
     repeated string Redirect = 1 [ (gogoproto.jsontag) = "redirect" ];
 }
 
-// Database is a TODO
+// Database contains information about a single database server.
 message Database {
-    // Name
+    // Name is the database identifier.
     string Name = 1 [ (gogoproto.jsontag) = "name" ];
-    // Kind
-    string Kind = 2 [ (gogoproto.jsontag) = "kind" ];
-    // URI
-    string URI = 3 [ (gogoproto.jsontag) = "uri" ];
+    // Protocol indicates the database type e.g. postgres or mysql.
+    string Protocol = 2 [ (gogoproto.jsontag) = "protocol" ];
+    // Address is the database connection address.
+    string Address = 3 [ (gogoproto.jsontag) = "address" ];
+    // CACert is base64-encoded database CA certificate.
+    string CACert = 4 [ (gogoproto.jsontag) = "ca_cert,omitempty" ];
+    // Cert is base64-encoded client certificate.
+    string Cert = 5 [ (gogoproto.jsontag) = "cert,omitempty" ];
+    // Key is base64-encoded client private key.
+    string Key = 6 [ (gogoproto.jsontag) = "key,omitempty" ];
 }
 
 // CommandLabelV2 is a label that has a value as a result of the
