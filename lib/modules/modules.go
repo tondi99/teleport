@@ -125,7 +125,14 @@ func (p *defaultModules) IsBoringBinary() bool {
 	return false
 }
 
+// resetModules resets the modules interface to defaults
+func resetModules() {
+	mutex.Lock()
+	defer mutex.Unlock()
+	modules = &defaultModules{}
+}
+
 var (
-	mutex           = &sync.Mutex{}
+	mutex   sync.Mutex
 	modules Modules = &defaultModules{}
 )
