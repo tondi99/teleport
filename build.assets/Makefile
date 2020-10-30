@@ -146,7 +146,7 @@ clean:
 # Runs tests inside a build container
 #
 .PHONY: test
-test: FLAGS ?= -cover -race -count=10 -timeout=30m
+test: FLAGS ?= -cover -race -count=1 -timeout=30m
 test: buildbox
 	docker run $(DOCKERFLAGS) $(BCCFLAGS) $(NOROOT) -t $(BUILDBOX) \
 		/bin/bash -c \
