@@ -908,6 +908,7 @@ type disconnectTestCase struct {
 	sessCtlTimeout    time.Duration
 	assertExpected    func(*check.C, error)
 	postFunc          func(context.Context, *check.C, *TeleInstance)
+	comment           string
 }
 
 // TestDisconnectScenarios tests multiple scenarios with client disconnects
@@ -922,6 +923,7 @@ func (s *IntSuite) TestDisconnectScenarios(c *check.C) {
 				ClientIdleTimeout: services.NewDuration(500 * time.Millisecond),
 			},
 			disconnectTimeout: time.Second,
+			comment:           "1",
 		},
 		{
 			recordingMode: services.RecordAtProxy,
@@ -930,6 +932,7 @@ func (s *IntSuite) TestDisconnectScenarios(c *check.C) {
 				ClientIdleTimeout: services.NewDuration(500 * time.Millisecond),
 			},
 			disconnectTimeout: time.Second,
+			comment:           "2",
 		},
 		{
 			recordingMode: services.RecordAtNode,
@@ -938,6 +941,7 @@ func (s *IntSuite) TestDisconnectScenarios(c *check.C) {
 				MaxSessionTTL:         services.NewDuration(2 * time.Second),
 			},
 			disconnectTimeout: 4 * time.Second,
+			comment:           "3",
 		},
 		{
 			recordingMode: services.RecordAtProxy,
@@ -947,8 +951,9 @@ func (s *IntSuite) TestDisconnectScenarios(c *check.C) {
 				MaxSessionTTL:         services.NewDuration(2 * time.Second),
 			},
 			disconnectTimeout: 4 * time.Second,
+			comment:           "4",
 		},
-		{ // verify that concurrent connection limits are applied when recording at node
+		{
 			recordingMode: services.RecordAtNode,
 			options: services.RoleOptions{
 				MaxConnections: 1,
@@ -960,8 +965,9 @@ func (s *IntSuite) TestDisconnectScenarios(c *check.C) {
 					c.Fatalf("Expected 'administratively prohibited', got: %v", err)
 				}
 			},
+			comment: "verify that concurrent connection limits are applied when recording at node",
 		},
-		{ // verify that concurrent connection limits are applied when recording at proxy
+		{
 			recordingMode: services.RecordAtProxy,
 			options: services.RoleOptions{
 				ForwardAgent:   services.NewBool(true),
@@ -974,8 +980,9 @@ func (s *IntSuite) TestDisconnectScenarios(c *check.C) {
 					c.Fatalf("Expected 'administratively prohibited', got: %v", err)
 				}
 			},
+			comment: "verify that concurrent connection limits are applied when recording at proxy",
 		},
-		{ // verify that lost connections to auth server terminate controlled conns
+		{
 			recordingMode: services.RecordAtNode,
 			options: services.RoleOptions{
 				MaxConnections: 1,
@@ -1019,6 +1026,7 @@ func (s *IntSuite) TestDisconnectScenarios(c *check.C) {
 				c.Assert(len(ss), check.Equals, 1)
 				c.Assert(t.StopAuth(false), check.IsNil)
 			},
+			comment: "verify that lost connections to auth server terminate controlled conns",
 		},
 	}
 	for _, tc := range testCases {
@@ -1035,6 +1043,7 @@ func (s *IntSuite) runDisconnectTest(c *check.C, tc disconnectTestCase) {
 		Priv:        s.priv,
 		Pub:         s.pub,
 	})
+	comment := check.Commentf(tc.comment)
 
 	username := s.me.Username
 	role, err := services.NewRole("devs", services.RoleSpecV3{
@@ -1043,7 +1052,7 @@ func (s *IntSuite) runDisconnectTest(c *check.C, tc disconnectTestCase) {
 			Logins: []string{username},
 		},
 	})
-	c.Assert(err, check.IsNil)
+	c.Assert(err, check.IsNil, comment)
 	t.AddUserWithRole(username, role)
 
 	clusterConfig, err := services.NewClusterConfig(services.ClusterConfigSpecV3{
@@ -1051,7 +1060,7 @@ func (s *IntSuite) runDisconnectTest(c *check.C, tc disconnectTestCase) {
 		LocalAuth:             services.NewBool(true),
 		SessionControlTimeout: services.Duration(tc.sessCtlTimeout),
 	})
-	c.Assert(err, check.IsNil)
+	c.Assert(err, check.IsNil, comment)
 
 	cfg := service.MakeDefaultConfig()
 	cfg.Auth.Enabled = true
@@ -1061,13 +1070,13 @@ func (s *IntSuite) runDisconnectTest(c *check.C, tc disconnectTestCase) {
 	cfg.Proxy.Enabled = true
 	cfg.SSH.Enabled = true
 
-	c.Assert(t.CreateEx(nil, cfg), check.IsNil)
-	c.Assert(t.Start(), check.IsNil)
+	c.Assert(t.CreateEx(nil, cfg), check.IsNil, comment)
+	c.Assert(t.Start(), check.IsNil, comment)
 	defer t.StopAll()
 
 	// get a reference to site obj:
 	site := t.GetSiteAPI(Site)
-	c.Assert(site, check.NotNil)
+	c.Assert(site, check.NotNil, comment)
 
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
@@ -1083,7 +1092,7 @@ func (s *IntSuite) runDisconnectTest(c *check.C, tc disconnectTestCase) {
 		openSession := func() {
 			defer cancel()
 			cl, err := t.NewClient(ClientConfig{Login: username, Cluster: Site, Host: Host, Port: t.GetPortSSHInt()})
-			c.Assert(err, check.IsNil)
+			c.Assert(err, check.IsNil, comment)
 			cl.Stdout = person
 			cl.Stdin = person
 
@@ -1098,7 +1107,7 @@ func (s *IntSuite) runDisconnectTest(c *check.C, tc disconnectTestCase) {
 			if tc.assertExpected != nil {
 				tc.assertExpected(c, err)
 			} else if err != nil && !trace.IsEOF(err) {
-				c.Fatalf("expected EOF or nil, got %v instead", err)
+				c.Fatalf("%s: expected EOF or nil, got %v instead", tc.comment, err)
 			}
 		}
 

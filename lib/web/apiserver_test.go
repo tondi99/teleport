@@ -994,6 +994,10 @@ func (s *WebSuite) TestWebsocketPingLoop(c *C) {
 	ws, err := s.makeTerminal(s.authPack(c, "foo"))
 	c.Assert(err, IsNil)
 
+	// flush out raw event (pty texts)
+	err = s.waitForRawEvent(ws, 5*time.Second)
+	c.Assert(err, IsNil)
+
 	var numPings int
 	start := time.Now()
 	for {
