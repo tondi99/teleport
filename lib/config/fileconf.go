@@ -836,6 +836,10 @@ type Database struct {
 	CertPath string `yaml:"cert_path"`
 	// KeyPath is the path to the client key.
 	KeyPath string `yaml:"key_path"`
+	//
+	Auth string `yaml:"auth"`
+	//
+	RDSCAPath string `yaml:"rds_ca_path"`
 	// TODO(r0mant): Add static/dynamic labels.
 }
 

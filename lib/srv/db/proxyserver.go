@@ -45,6 +45,8 @@ type ProxyServer struct {
 type ProxyServerConfig struct {
 	// AccessPoint is the caching client connected to the auth server.
 	AccessPoint auth.AccessPoint
+	//
+	AuthClient *auth.Client
 	// Tunnel is the reverse tunnel server.
 	Tunnel reversetunnel.Server
 	//
@@ -55,6 +57,9 @@ type ProxyServerConfig struct {
 func (c *ProxyServerConfig) CheckAndSetDefaults() error {
 	if c.AccessPoint == nil {
 		return trace.BadParameter("missing AccessPoint")
+	}
+	if c.AuthClient == nil {
+		return trace.BadParameter("missing AuthClient")
 	}
 	if c.Tunnel == nil {
 		return trace.BadParameter("missing Tunnel")
@@ -166,6 +171,21 @@ func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error
 		s.Debugf("Available databases: %#v", dbs)
 		db := dbs[0]
 		s.Debugf("Using database: %#v", db)
+
+		// s.Debug("Generating user cert")
+		// _, publicKey, err := native.GenerateKeyPair("")
+		// if err != nil {
+		// 	return trace.Wrap(err)
+		// }
+		// userCerts, err := s.AuthClient.GenerateUserCerts(context.TODO(), proto.UserCertsRequest{
+		// 	PublicKey: publicKey,
+		// 	Username:  identity.Username,
+		// 	Expires:   identity.Expires,
+		// })
+		// if err != nil {
+		// 	return trace.Wrap(err)
+		// }
+		// s.Debugf("Generated user certs: %#v", userCerts)
 
 		siteConn, err := site.Dial(reversetunnel.DialParams{
 			From:     &utils.NetAddr{AddrNetwork: "tcp", Addr: "@db-proxy"},

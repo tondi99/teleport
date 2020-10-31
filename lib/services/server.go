@@ -534,7 +534,9 @@ const ServerSpecV2Schema = `{
 			"address": {"type": "string"},
 			"ca_cert": {"type": "string"},
 			"cert": {"type": "string"},
-			"key": {"type": "string"}
+			"key": {"type": "string"},
+			"auth": {"type": "string"},
+			"rds_ca_path": {"type": "string"}
 		  }
 		}
 	  },

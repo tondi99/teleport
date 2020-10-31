@@ -288,7 +288,7 @@ func GetCheckerForBuiltinRole(clusterName string, clusterConfig services.Cluster
 					Rules: []services.Rule{
 						services.NewRule(services.KindEvent, services.RW()),
 						services.NewRule(services.KindProxy, services.RO()),
-						services.NewRule(services.KindCertAuthority, services.ReadNoSecrets()),
+						services.NewRule(services.KindCertAuthority, services.RO()), // services.ReadNoSecrets()),
 						services.NewRule(services.KindUser, services.RO()),
 						services.NewRule(services.KindNamespace, services.RO()),
 						services.NewRule(services.KindRole, services.RO()),

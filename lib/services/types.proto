@@ -215,6 +215,10 @@ message Database {
     string Cert = 5 [ (gogoproto.jsontag) = "cert,omitempty" ];
     // Key is base64-encoded client private key.
     string Key = 6 [ (gogoproto.jsontag) = "key,omitempty" ];
+    //
+    string Auth = 7 [ (gogoproto.jsontag) = "auth,omitempty" ];
+    //
+    string RDSCAPath = 8 [ (gogoproto.jsontag) = "rds_ca_path,omitempty" ];
 }
 
 // CommandLabelV2 is a label that has a value as a result of the

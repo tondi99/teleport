@@ -528,6 +528,10 @@ type Database struct {
 	Cert []byte
 	// Key is the client key.
 	Key []byte
+	//
+	Auth string
+	//
+	RDSCA []byte
 }
 
 // AppsConfig configures application proxy service.

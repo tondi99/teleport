@@ -20,7 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
+	"crypto/x509/pkix"
 	"fmt"
 	"net"
 	"sync"
@@ -28,16 +28,20 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/auth"
+	"github.com/gravitational/teleport/lib/auth/native"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/labels"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/srv"
+	"github.com/gravitational/teleport/lib/sshutils"
+	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
 
 	"github.com/gravitational/trace"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgproto3/v2"
 	"github.com/jonboulle/clockwork"
+	"github.com/pborman/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -61,6 +65,9 @@ type Config struct {
 
 	// TLSConfig is the *tls.Config for this server.
 	TLSConfig *tls.Config
+
+	//
+	TLSClientConfig *tls.Config
 
 	// CipherSuites is the list of TLS cipher suites that have been configured
 	// for this process.
@@ -96,6 +103,9 @@ func (c *Config) CheckAndSetDefaults() error {
 	}
 	if c.TLSConfig == nil {
 		return trace.BadParameter("tls config missing")
+	}
+	if c.TLSClientConfig == nil {
+		return trace.BadParameter("tls client config missing")
 	}
 	if len(c.CipherSuites) == 0 {
 		return trace.BadParameter("cipersuites missing")
@@ -250,6 +260,8 @@ func (s *Server) ForceHeartbeat() error {
 // HandleConnection ...
 func (s *Server) HandleConnection(conn net.Conn) {
 	s.log.Debugf("HandleConnection(%#v)", conn)
+	//tlsConn := tls.Server(conn, s.c.TLSConfig)
+	//if err := s.handleConnection(tlsConn); err != nil {
 	if err := s.handleConnection(conn); err != nil {
 		s.log.WithError(err).Error("Failed to handle connection")
 	}
@@ -271,6 +283,41 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	}
 }
 
+// sessionContext contains information about a database session.
+type sessionContext struct {
+	// id is the unique session id.
+	id string
+	// db is the database instance information.
+	db *services.Database
+	// dbUser is the requested database user.
+	dbUser string
+	// dbName is the requested database name.
+	dbName string
+}
+
+func (s *Server) getConnectConfig(session sessionContext) (*pgconn.Config, error) {
+	if session.db.Auth == "aws-iam" {
+		return nil, nil
+	}
+	connString := fmt.Sprintf("postgres://%s@%s/?database=%s&sslmode=verify-ca",
+		session.dbUser,
+		session.db.Address,
+		session.dbName)
+	connectConfig, err := pgconn.ParseConfig(connString)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	addr, err := utils.ParseAddr(session.db.Address)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	connectConfig.TLSConfig, err = s.getClientTLSConfig(session.dbUser, addr.Host(), time.Hour)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return connectConfig, nil
+}
+
 func (s *Server) handleConnection(conn net.Conn) error {
 	backend := pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn)
 
@@ -290,43 +337,45 @@ func (s *Server) handleConnection(conn net.Conn) error {
 	database := s.server.GetDatabases()[0]
 	s.log.Debugf("Will connect to database %#v", database)
 
-	// Dial the database.
-	connString := fmt.Sprintf("postgres://%s@%s/?database=%s&sslmode=verify-ca",
-		startupMessage.Parameters["user"],
-		database.Address,
-		startupMessage.Parameters["database"])
-	connectConfig, err := pgconn.ParseConfig(connString)
+	sessionCtx := sessionContext{
+		id:     uuid.New(),
+		db:     database,
+		dbName: startupMessage.Parameters["database"],
+		dbUser: startupMessage.Parameters["user"],
+	}
+
+	// caCertPool := x509.NewCertPool()
+	// caCertBytes, err := base64.StdEncoding.DecodeString(database.CACert)
+	// if err != nil {
+	// 	return trace.Wrap(err)
+	// }
+	// certBytes, err := base64.StdEncoding.DecodeString(database.Cert)
+	// if err != nil {
+	// 	return trace.Wrap(err)
+	// }
+	// keyBytes, err := base64.StdEncoding.DecodeString(database.Key)
+	// if err != nil {
+	// 	return trace.Wrap(err)
+	// }
+	// if !caCertPool.AppendCertsFromPEM(caCertBytes) {
+	// 	return trace.BadParameter("failed to append ca pem")
+	// }
+	// clientCert, err := tls.X509KeyPair(certBytes, keyBytes)
+	// if err != nil {
+	// 	return trace.Wrap(err)
+	// }
+	// connectConfig.TLSConfig = &tls.Config{
+	// 	Certificates: []tls.Certificate{clientCert},
+	// 	RootCAs:      caCertPool,
+	// 	ServerName:   addr.Host(),
+	// }
+	// fmt.Printf("%#v", s.c.TLSClientConfig)
+	// connectConfig.TLSConfig = s.c.TLSClientConfig
+	// connectConfig.TLSConfig.ServerName = addr.Host()
+
+	connectConfig, err := s.getConnectConfig(sessionCtx)
 	if err != nil {
 		return trace.Wrap(err)
-	}
-	caCertPool := x509.NewCertPool()
-	caCertBytes, err := base64.StdEncoding.DecodeString(database.CACert)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	certBytes, err := base64.StdEncoding.DecodeString(database.Cert)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	keyBytes, err := base64.StdEncoding.DecodeString(database.Key)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	if !caCertPool.AppendCertsFromPEM(caCertBytes) {
-		return trace.BadParameter("failed to append ca pem")
-	}
-	clientCert, err := tls.X509KeyPair(certBytes, keyBytes)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	addr, err := utils.ParseAddr(database.Address)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	connectConfig.TLSConfig = &tls.Config{
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      caCertPool,
-		ServerName:   addr.Host(),
 	}
 
 	// Connect to the backend database.
@@ -334,6 +383,11 @@ func (s *Server) handleConnection(conn net.Conn) error {
 	if err != nil {
 		return trace.Wrap(err)
 	}
+
+	if err := s.emitSessionStartEvent(sessionCtx); err != nil {
+		return trace.Wrap(err)
+	}
+
 	frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(frontendConn.Conn()), frontendConn.Conn())
 
 	s.log.Debug("Sending AuthenticationOk")
@@ -362,8 +416,14 @@ func (s *Server) handleConnection(conn net.Conn) error {
 			switch msg := message.(type) {
 			case *pgproto3.Query:
 				log.Infof("---> Executing query %q", msg.String)
+				if err := s.emitQueryEvent(sessionCtx, msg.String); err != nil {
+					log.WithError(err).Error("Failed to emit audit event.")
+				}
 			case *pgproto3.Terminate:
 				log.Infof("---> Session terminated")
+				if err := s.emitSessionEndEvent(sessionCtx); err != nil {
+					log.WithError(err).Error("Failed to emit audit event.")
+				}
 			}
 			err = frontend.Send(message)
 			if err != nil {
@@ -381,7 +441,7 @@ func (s *Server) handleConnection(conn net.Conn) error {
 		message, err := frontend.Receive()
 		if err != nil {
 			log.WithError(err).Error("Failed to receive message from server")
-			continue
+			return trace.Wrap(err)
 		}
 		log.Debugf("Received message: %#v", message)
 		switch msg := message.(type) {
@@ -395,7 +455,7 @@ func (s *Server) handleConnection(conn net.Conn) error {
 		err = backend.Send(message)
 		if err != nil {
 			log.WithError(err).Error("Failed to send message from server to client")
-			continue
+			return trace.Wrap(err)
 		}
 		log.Debug("Sent message")
 	}
@@ -410,6 +470,65 @@ func (s *Server) handleConnection(conn net.Conn) error {
 	// }
 	// s.log.Debugf("%#v", tlsConn.ConnectionState())
 	return nil
+}
+
+func (s *Server) getClientTLSConfig(username, host string, ttl time.Duration) (*tls.Config, error) {
+	s.log.Debug("Generating client certificate")
+	privateBytes, publicBytes, err := native.GenerateKeyPair("")
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	// certs, err := s.c.AuthClient.GenerateUserCerts(context.TODO(), proto.UserCertsRequest{
+	// 	PublicKey: publicBytes,
+	// 	Username:  username,
+	// 	Expires:   time.Now().UTC().Add(ttl),
+	// })
+	// if err != nil {
+	// 	return nil, trace.Wrap(err)
+	// }
+	clusterName, err := s.c.AuthClient.GetClusterName()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	certAuthority, err := s.c.AuthClient.GetCertAuthority(services.CertAuthID{
+		Type:       services.UserCA,
+		DomainName: clusterName.GetClusterName(),
+	}, true)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	tlsAuthority, err := certAuthority.TLSCA()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	cryptoPublicKey, err := sshutils.CryptoPublicKey(publicBytes)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	certBytes, err := tlsAuthority.GenerateCertificate(tlsca.CertificateRequest{
+		PublicKey: cryptoPublicKey,
+		Subject:   pkix.Name{CommonName: username},
+		NotAfter:  time.Now().UTC().Add(ttl),
+	})
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	clientCert, err := tls.X509KeyPair(certBytes, privateBytes)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	s.log.Debugf("Generated client certificate: %#v", clientCert)
+	caCertPool := x509.NewCertPool()
+	for _, keypair := range certAuthority.GetTLSKeyPairs() {
+		if !caCertPool.AppendCertsFromPEM(keypair.Cert) {
+			return nil, trace.BadParameter("failed to append ca pem")
+		}
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{clientCert},
+		RootCAs:      caCertPool,
+		ServerName:   host,
+	}, nil
 }
 
 // getConfigForClient returns TLS config with a list of certificate authorities

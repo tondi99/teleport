@@ -328,7 +328,7 @@ type CertificateRequest struct {
 // CheckAndSetDefaults checks and sets default values
 func (c *CertificateRequest) CheckAndSetDefaults() error {
 	if c.Clock == nil {
-		return trace.BadParameter("missing parameter Clock")
+		c.Clock = clockwork.NewRealClock()
 	}
 	if c.PublicKey == nil {
 		return trace.BadParameter("missing parameter PublicKey")

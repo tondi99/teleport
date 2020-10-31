@@ -123,6 +123,10 @@ type CommandLineFlags struct {
 	DatabaseCertPath string
 	// DatabaseKeyPath is the client key path.
 	DatabaseKeyPath string
+	//
+	DatabaseAuth string
+	//
+	DatabaseRDSCAPath string
 }
 
 // readConfigFile reads /etc/teleport.yaml (or whatever is passed via --config flag)
@@ -743,20 +747,28 @@ func applyKubeConfig(fc *FileConfig, cfg *service.Config) error {
 func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
 	cfg.Databases.Enabled = true
 	for _, database := range fc.Databases.Databases {
-		if err := database.Check(); err != nil {
-			return trace.Wrap(err)
-		}
-		caBytes, err := ioutil.ReadFile(database.CAPath)
+		err := database.Check()
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		certBytes, err := ioutil.ReadFile(database.CertPath)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		keyBytes, err := ioutil.ReadFile(database.KeyPath)
-		if err != nil {
-			return trace.Wrap(err)
+		// caBytes, err := ioutil.ReadFile(database.CAPath)
+		// if err != nil {
+		// 	return trace.Wrap(err)
+		// }
+		// certBytes, err := ioutil.ReadFile(database.CertPath)
+		// if err != nil {
+		// 	return trace.Wrap(err)
+		// }
+		// keyBytes, err := ioutil.ReadFile(database.KeyPath)
+		// if err != nil {
+		// 	return trace.Wrap(err)
+		// }
+		var rdsCA []byte
+		if database.RDSCAPath != "" {
+			rdsCA, err = ioutil.ReadFile(database.RDSCAPath)
+			if err != nil {
+				return trace.Wrap(err)
+			}
 		}
 		// TODO(r0mant): Also parse static/dynamic labels like apps below.
 		cfg.Databases.Databases = append(cfg.Databases.Databases,
@@ -764,9 +776,11 @@ func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
 				Name:     database.Name,
 				Protocol: database.Protocol,
 				Address:  database.Address,
-				CACert:   caBytes,
-				Cert:     certBytes,
-				Key:      keyBytes,
+				// CACert:   caBytes,
+				// Cert:     certBytes,
+				// Key:      keyBytes,
+				Auth:  database.Auth,
+				RDSCA: rdsCA,
 			})
 	}
 	return nil
@@ -1075,12 +1089,14 @@ func Configure(clf *CommandLineFlags, cfg *service.Config) error {
 			},
 			Databases: []*Database{
 				{
-					Name:     clf.DatabaseName,
-					Protocol: clf.DatabaseKind,
-					Address:  clf.DatabaseAddress,
-					CAPath:   clf.DatabaseCAPath,
-					CertPath: clf.DatabaseCertPath,
-					KeyPath:  clf.DatabaseKeyPath,
+					Name:      clf.DatabaseName,
+					Protocol:  clf.DatabaseKind,
+					Address:   clf.DatabaseAddress,
+					CAPath:    clf.DatabaseCAPath,
+					CertPath:  clf.DatabaseCertPath,
+					KeyPath:   clf.DatabaseKeyPath,
+					Auth:      clf.DatabaseAuth,
+					RDSCAPath: clf.DatabaseRDSCAPath,
 				},
 			},
 		}
