@@ -2081,6 +2081,14 @@ func (a *ServerWithRoles) DeleteAllDatabaseServers(ctx context.Context, namespac
 	return a.authServer.DeleteAllAppServers(ctx, namespace)
 }
 
+// ...
+func (a *ServerWithRoles) SignDatabaseCSR(ctx context.Context, req *proto.SignDatabaseCSRRequest) (*proto.SignDatabaseCSRResponse, error) {
+	if !a.hasBuiltinRole(string(teleport.RoleProxy)) {
+		return nil, trace.AccessDenied("this request can be only executed by a proxy")
+	}
+	return a.authServer.SignDatabaseCSR(ctx, req)
+}
+
 // GetAppServers gets all application servers.
 func (a *ServerWithRoles) GetAppServers(ctx context.Context, namespace string, opts ...services.MarshalOption) ([]services.Server, error) {
 	if err := a.action(namespace, services.KindAppServer, services.VerbList); err != nil {

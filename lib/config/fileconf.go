@@ -837,6 +837,8 @@ type Database struct {
 	// KeyPath is the path to the client key.
 	KeyPath string `yaml:"key_path"`
 	//
+	Region string `yaml:"region"`
+	//
 	Auth string `yaml:"auth"`
 	//
 	RDSCAPath string `yaml:"rds_ca_path"`

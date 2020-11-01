@@ -100,6 +100,9 @@ func (s *Server) emitSessionStartEvent(session sessionContext) error {
 			ServerID:        s.c.Server.GetName(),
 			ServerNamespace: defaults.Namespace,
 		},
+		UserMetadata: events.UserMetadata{
+			User: session.identity.Username,
+		},
 		SessionMetadata: events.SessionMetadata{
 			SessionID: session.id,
 		},
@@ -119,6 +122,9 @@ func (s *Server) emitSessionEndEvent(session sessionContext) error {
 			Type: events.DatabaseSessionEndEvent,
 			Code: events.DatabaseSessionEndCode,
 		},
+		UserMetadata: events.UserMetadata{
+			User: session.identity.Username,
+		},
 		SessionMetadata: events.SessionMetadata{
 			SessionID: session.id,
 		},
@@ -137,6 +143,9 @@ func (s *Server) emitQueryEvent(session sessionContext, query string) error {
 		Metadata: events.Metadata{
 			Type: events.DatabaseQueryEvent,
 			Code: events.DatabaseQueryCode,
+		},
+		UserMetadata: events.UserMetadata{
+			User: session.identity.Username,
 		},
 		SessionMetadata: events.SessionMetadata{
 			SessionID: session.id,

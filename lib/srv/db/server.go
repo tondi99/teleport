@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"sync"
@@ -37,6 +38,8 @@ import (
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
 
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/rds/rdsutils"
 	"github.com/gravitational/trace"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgproto3/v2"
@@ -260,9 +263,14 @@ func (s *Server) ForceHeartbeat() error {
 // HandleConnection ...
 func (s *Server) HandleConnection(conn net.Conn) {
 	s.log.Debugf("HandleConnection(%#v)", conn)
-	//tlsConn := tls.Server(conn, s.c.TLSConfig)
-	//if err := s.handleConnection(tlsConn); err != nil {
-	if err := s.handleConnection(conn); err != nil {
+	tlsConn := tls.Server(conn, s.c.TLSConfig)
+	err := tlsConn.Handshake()
+	if err != nil {
+		s.log.WithError(err).Error("Handshake failed")
+		return
+	}
+	if err := s.handleConnection(tlsConn); err != nil {
+		//if err := s.handleConnection(conn); err != nil {
 		s.log.WithError(err).Error("Failed to handle connection")
 	}
 	return
@@ -289,29 +297,64 @@ type sessionContext struct {
 	id string
 	// db is the database instance information.
 	db *services.Database
+	// identity is the identity of the connecting teleport user.
+	identity *tlsca.Identity
 	// dbUser is the requested database user.
 	dbUser string
 	// dbName is the requested database name.
 	dbName string
 }
 
-func (s *Server) getConnectConfig(session sessionContext) (*pgconn.Config, error) {
-	if session.db.Auth == "aws-iam" {
-		return nil, nil
-	}
+func (s *Server) getConnectConfig(sessionCtx sessionContext) (*pgconn.Config, error) {
 	connString := fmt.Sprintf("postgres://%s@%s/?database=%s&sslmode=verify-ca",
-		session.dbUser,
-		session.db.Address,
-		session.dbName)
+		sessionCtx.dbUser,
+		sessionCtx.db.Address,
+		sessionCtx.dbName)
 	connectConfig, err := pgconn.ParseConfig(connString)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	addr, err := utils.ParseAddr(session.db.Address)
+	addr, err := utils.ParseAddr(sessionCtx.db.Address)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	connectConfig.TLSConfig, err = s.getClientTLSConfig(session.dbUser, addr.Host(), time.Hour)
+	if sessionCtx.db.Auth == "aws-iam" {
+		s.log.Debug("Generating AWS RDS auth token.")
+		// TODO(r0mant): Allow supplying credentials via yaml config.
+		sess, err := session.NewSessionWithOptions(session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+		})
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		// Generated auth token will be used as a password.
+		connectConfig.Password, err = rdsutils.BuildAuthToken(
+			sessionCtx.db.Address,
+			sessionCtx.db.Region,
+			sessionCtx.dbUser,
+			sess.Config.Credentials)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		s.log.Debugf("Generated AWS RDS auth token: %q.", connectConfig.Password)
+		// Add RDS CA to the trusted pool.
+		caCertPool := x509.NewCertPool()
+		rdsCABytes, err := base64.StdEncoding.DecodeString(sessionCtx.db.RDSCA)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		if !caCertPool.AppendCertsFromPEM(rdsCABytes) {
+			return nil, trace.BadParameter("failed to append RDS CA certificate to the pool")
+		}
+		connectConfig.TLSConfig = &tls.Config{
+			RootCAs:    caCertPool,
+			ServerName: addr.Host(),
+		}
+		return connectConfig, nil
+	}
+	// When connecting to an onprem database, generate certificate signed by
+	// our (host?) CA for mutual TLS.
+	connectConfig.TLSConfig, err = s.getClientTLSConfig(sessionCtx.dbUser, addr.Host(), time.Hour)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -319,6 +362,11 @@ func (s *Server) getConnectConfig(session sessionContext) (*pgconn.Config, error
 }
 
 func (s *Server) handleConnection(conn net.Conn) error {
+	identity, err := extractIdentity(conn, s.log)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
 	backend := pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn)
 
 	s.log.Debug("Waiting for startup message")
@@ -338,10 +386,11 @@ func (s *Server) handleConnection(conn net.Conn) error {
 	s.log.Debugf("Will connect to database %#v", database)
 
 	sessionCtx := sessionContext{
-		id:     uuid.New(),
-		db:     database,
-		dbName: startupMessage.Parameters["database"],
-		dbUser: startupMessage.Parameters["user"],
+		id:       uuid.New(),
+		identity: identity,
+		db:       database,
+		dbName:   startupMessage.Parameters["database"],
+		dbUser:   startupMessage.Parameters["user"],
 	}
 
 	// caCertPool := x509.NewCertPool()

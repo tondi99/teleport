@@ -18,12 +18,17 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 
 	"github.com/gravitational/teleport/lib/auth"
+	"github.com/gravitational/teleport/lib/auth/native"
+	"github.com/gravitational/teleport/lib/auth/proto"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/reversetunnel"
 	"github.com/gravitational/teleport/lib/services"
@@ -33,6 +38,7 @@ import (
 	"github.com/gravitational/trace"
 	"github.com/jackc/pgproto3/v2"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/ssh"
 )
 
 //
@@ -103,6 +109,25 @@ func (s *ProxyServer) Serve(listener net.Listener) error {
 	return nil
 }
 
+func extractIdentity(conn net.Conn, log logrus.FieldLogger) (*tlsca.Identity, error) {
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		return nil, trace.BadParameter("expected tls connection, got %T", conn)
+	}
+	certs := tlsConn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return nil, trace.NotFound("client didn't present any certificates")
+	}
+	log.Infof("Client presented certificate: SerialNumber[%v] Issuer[%v] Subject[%v].",
+		certs[0].SerialNumber, certs[0].Issuer, certs[0].Subject)
+	identity, err := tlsca.FromSubject(certs[0].Subject, certs[0].NotAfter)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	log.Infof("Client identity: %#v.", identity)
+	return identity, nil
+}
+
 //
 func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error {
 	backend := pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn)
@@ -130,25 +155,30 @@ func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error
 
 	case *pgproto3.StartupMessage:
 		// Extract the identity information from the client certificate.
-		tlsConn, ok := conn.(*tls.Conn)
-		if !ok {
-			return nil
-		}
-
-		certs := tlsConn.ConnectionState().PeerCertificates
-		if len(certs) == 0 {
-			return trace.NotFound("client didn't present any certificates")
-		}
-
-		s.Infof("Client presented certificate: SerialNumber[%v] Issuer[%v] Subject[%v]",
-			certs[0].SerialNumber, certs[0].Issuer, certs[0].Subject)
-
-		identity, err := tlsca.FromSubject(certs[0].Subject, certs[0].NotAfter)
+		identity, err := extractIdentity(conn, s.FieldLogger)
 		if err != nil {
 			return trace.Wrap(err)
 		}
 
-		s.Infof("Client identity: %#v", identity)
+		// tlsConn, ok := conn.(*tls.Conn)
+		// if !ok {
+		// 	return nil
+		// }
+
+		// certs := tlsConn.ConnectionState().PeerCertificates
+		// if len(certs) == 0 {
+		// 	return trace.NotFound("client didn't present any certificates")
+		// }
+
+		// s.Infof("Client presented certificate: SerialNumber[%v] Issuer[%v] Subject[%v]",
+		// 	certs[0].SerialNumber, certs[0].Issuer, certs[0].Subject)
+
+		// identity, err := tlsca.FromSubject(certs[0].Subject, certs[0].NotAfter)
+		// if err != nil {
+		// 	return trace.Wrap(err)
+		// }
+
+		// s.Infof("Client identity: %#v", identity)
 
 		// TODO(r0mant): Add authorization.
 
@@ -187,6 +217,11 @@ func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error
 		// }
 		// s.Debugf("Generated user certs: %#v", userCerts)
 
+		tlsConfig, err := s.getConfigForServer(ctx, identity, dbServer)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
 		siteConn, err := site.Dial(reversetunnel.DialParams{
 			From:     &utils.NetAddr{AddrNetwork: "tcp", Addr: "@db-proxy"},
 			To:       &utils.NetAddr{AddrNetwork: "tcp", Addr: fmt.Sprintf("@db-%v", db.Name)},
@@ -197,6 +232,8 @@ func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error
 			return trace.Wrap(err)
 		}
 
+		siteConn = tls.Client(siteConn, tlsConfig)
+
 		// Pass along the startup message.
 		frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(siteConn), siteConn)
 		err = frontend.Send(message)
@@ -204,8 +241,8 @@ func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error
 			return trace.Wrap(err)
 		}
 
-		go io.Copy(siteConn, tlsConn)
-		_, err = io.Copy(tlsConn, siteConn)
+		go io.Copy(siteConn, conn)
+		_, err = io.Copy(conn, siteConn)
 		if err != nil {
 			return trace.Wrap(err)
 		}
@@ -215,6 +252,62 @@ func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error
 	default:
 		return trace.BadParameter("unsupported startup message type: %#v", startupMessage)
 	}
+}
+
+// getConfigForServer returns TLS config used for establishing connection
+// to a remote database server over reverse tunnel.
+func (s *ProxyServer) getConfigForServer(ctx context.Context, identity *tlsca.Identity, server services.Server) (*tls.Config, error) {
+	privateKeyBytes, _, err := native.GenerateKeyPair("")
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	privateKey, err := ssh.ParseRawPrivateKey(privateKeyBytes)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	subject, err := identity.Subject()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	csr := &x509.CertificateRequest{
+		Subject: subject,
+	}
+	csrBytes, err := x509.CreateCertificateRequest(rand.Reader, csr, privateKey)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	csrPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE REQUEST",
+		Bytes: csrBytes,
+	})
+	cluster, err := s.AuthClient.GetClusterName() // TODO(r0mant): Extract cluster name from identity.
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	response, err := s.AuthClient.SignDatabaseCSR(ctx, &proto.SignDatabaseCSRRequest{
+		CSR:         csrPEM,
+		ClusterName: cluster.GetClusterName(),
+	})
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	cert, err := tls.X509KeyPair(response.Cert, privateKeyBytes)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	s.Debug("Generated database certificate.")
+	pool := x509.NewCertPool()
+	for _, caCert := range response.CACerts {
+		ok := pool.AppendCertsFromPEM(caCert)
+		if !ok {
+			return nil, trace.BadParameter("failed to append CA certificate")
+		}
+	}
+	return &tls.Config{
+		ServerName:   server.GetHostname(),
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      pool,
+	}, nil
 }
 
 // getConfigForClient returns TLS config with a list of certificate authorities

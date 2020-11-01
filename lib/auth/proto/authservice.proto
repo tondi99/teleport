@@ -258,40 +258,6 @@ message CompleteStream {}
 // FlushAndCloseStream flushes the stream data and closes the stream
 message FlushAndCloseStream {}
 
-// GetDatabaseServersRequest is a request to return all registered database servers.
-message GetDatabaseServersRequest {
-    // Namespace is the database server namespace.
-    string Namespace = 1 [ (gogoproto.jsontag) = "namespace" ];
-    // SkipValidation allows to turn off JSON schema validation.
-    bool SkipValidation = 2 [ (gogoproto.jsontag) = "skip_validation" ];
-}
-
-// GetDatabaseServersResponse contains all registered database servers.
-message GetDatabaseServersResponse {
-    // Servers is a list of database proxy servers.
-    repeated services.ServerV2 Servers = 1 [ (gogoproto.jsontag) = "servers" ];
-}
-
-// UpsertDatabaseServerRequest is a request to register database server.
-message UpsertDatabaseServerRequest {
-    // Server is the database proxy server to register.
-    services.ServerV2 Server = 1 [ (gogoproto.jsontag) = "server" ];
-}
-
-// DeleteDatabaseServerRequest is a request to delete a database server.
-message DeleteDatabaseServerRequest {
-    // Namespace is the database server namespace.
-    string Namespace = 1 [ (gogoproto.jsontag) = "namespace" ];
-    // Name is the database server name.
-    string Name = 2 [ (gogoproto.jsontag) = "name" ];
-}
-
-// DeleteAllDatabaseServersRequest is a request to delete all database servers.
-message DeleteAllDatabaseServersRequest {
-    // Namespace is the database servers namespace.
-    string Namespace = 1 [ (gogoproto.jsontag) = "namespace" ];
-}
-
 // GetAppServersRequest are the parameters used to request application servers.
 message GetAppServersRequest {
     // Namespace is the namespace for application.
@@ -382,6 +348,56 @@ message CreateAppSessionResponse {
 // DeleteAppSessionRequest contains the parameters used to remove an application web session.
 message DeleteAppSessionRequest { string SessionID = 1 [ (gogoproto.jsontag) = "session_id" ]; }
 
+// GetDatabaseServersRequest is a request to return all registered database servers.
+message GetDatabaseServersRequest {
+    // Namespace is the database server namespace.
+    string Namespace = 1 [ (gogoproto.jsontag) = "namespace" ];
+    // SkipValidation allows to turn off JSON schema validation.
+    bool SkipValidation = 2 [ (gogoproto.jsontag) = "skip_validation" ];
+}
+
+// GetDatabaseServersResponse contains all registered database servers.
+message GetDatabaseServersResponse {
+    // Servers is a list of database proxy servers.
+    repeated services.ServerV2 Servers = 1 [ (gogoproto.jsontag) = "servers" ];
+}
+
+// UpsertDatabaseServerRequest is a request to register database server.
+message UpsertDatabaseServerRequest {
+    // Server is the database proxy server to register.
+    services.ServerV2 Server = 1 [ (gogoproto.jsontag) = "server" ];
+}
+
+// DeleteDatabaseServerRequest is a request to delete a database server.
+message DeleteDatabaseServerRequest {
+    // Namespace is the database server namespace.
+    string Namespace = 1 [ (gogoproto.jsontag) = "namespace" ];
+    // Name is the database server name.
+    string Name = 2 [ (gogoproto.jsontag) = "name" ];
+}
+
+// DeleteAllDatabaseServersRequest is a request to delete all database servers.
+message DeleteAllDatabaseServersRequest {
+    // Namespace is the database servers namespace.
+    string Namespace = 1 [ (gogoproto.jsontag) = "namespace" ];
+}
+
+//
+message SignDatabaseCSRRequest {
+    //
+    bytes CSR = 1 [ (gogoproto.jsontag) = "csr" ];
+    //
+    string ClusterName = 2 [ (gogoproto.jsontag) = "cluster_name" ];
+}
+
+//
+message SignDatabaseCSRResponse {
+    //
+    bytes Cert = 1 [ (gogoproto.jsontag) = "cert" ];
+    //
+    repeated bytes CACerts = 2 [ (gogoproto.jsontag) = "ca_certs" ];
+}
+
 // AuthService is authentication/authorization service implementation
 service AuthService {
     // SendKeepAlives allows node to send a stream of keep alive requests
@@ -453,15 +469,6 @@ service AuthService {
     // DeleteAllAppServers removes all application servers.
     rpc DeleteAllAppServers(DeleteAllAppServersRequest) returns (google.protobuf.Empty);
 
-    // GetDatabaseServers returns all registered database proxy servers.
-    rpc GetDatabaseServers(GetDatabaseServersRequest) returns (GetDatabaseServersResponse);
-    // UpsertDatabaseServer registers a new database proxy server.
-    rpc UpsertDatabaseServer(UpsertDatabaseServerRequest) returns (services.KeepAlive);
-    // DeleteDatabaseServer removes the specified database proxy server.
-    rpc DeleteDatabaseServer(DeleteDatabaseServerRequest) returns (google.protobuf.Empty);
-    // DeleteAllDatabaseServers removes all registered database proxy servers.
-    rpc DeleteAllDatabaseServers(DeleteAllDatabaseServersRequest) returns (google.protobuf.Empty);
-
     // GenerateAppToken will generate a JWT token for application access.
     rpc GenerateAppToken(GenerateAppTokenRequest) returns (GenerateAppTokenResponse);
 
@@ -476,4 +483,16 @@ service AuthService {
     rpc DeleteAppSession(DeleteAppSessionRequest) returns (google.protobuf.Empty);
     // DeleteAllAppSessions removes all application web sessions.
     rpc DeleteAllAppSessions(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+    // GetDatabaseServers returns all registered database proxy servers.
+    rpc GetDatabaseServers(GetDatabaseServersRequest) returns (GetDatabaseServersResponse);
+    // UpsertDatabaseServer registers a new database proxy server.
+    rpc UpsertDatabaseServer(UpsertDatabaseServerRequest) returns (services.KeepAlive);
+    // DeleteDatabaseServer removes the specified database proxy server.
+    rpc DeleteDatabaseServer(DeleteDatabaseServerRequest) returns (google.protobuf.Empty);
+    // DeleteAllDatabaseServers removes all registered database proxy servers.
+    rpc DeleteAllDatabaseServers(DeleteAllDatabaseServersRequest) returns (google.protobuf.Empty);
+
+    //
+    rpc SignDatabaseCSR(SignDatabaseCSRRequest) returns (SignDatabaseCSRResponse);
 }

@@ -2707,6 +2707,9 @@ func (process *TeleportProcess) initDatabases() {
 				CACert:   base64.StdEncoding.EncodeToString(database.CACert),
 				Cert:     base64.StdEncoding.EncodeToString(database.Cert),
 				Key:      base64.StdEncoding.EncodeToString(database.Key),
+				Region:   database.Region,
+				Auth:     database.Auth,
+				RDSCA:    base64.StdEncoding.EncodeToString(database.RDSCA),
 			})
 		}
 

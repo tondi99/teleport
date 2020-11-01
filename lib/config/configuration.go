@@ -124,6 +124,8 @@ type CommandLineFlags struct {
 	// DatabaseKeyPath is the client key path.
 	DatabaseKeyPath string
 	//
+	DatabaseRegion string
+	//
 	DatabaseAuth string
 	//
 	DatabaseRDSCAPath string
@@ -779,8 +781,9 @@ func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
 				// CACert:   caBytes,
 				// Cert:     certBytes,
 				// Key:      keyBytes,
-				Auth:  database.Auth,
-				RDSCA: rdsCA,
+				Region: database.Region,
+				Auth:   database.Auth,
+				RDSCA:  rdsCA,
 			})
 	}
 	return nil
@@ -1095,6 +1098,7 @@ func Configure(clf *CommandLineFlags, cfg *service.Config) error {
 					CAPath:    clf.DatabaseCAPath,
 					CertPath:  clf.DatabaseCertPath,
 					KeyPath:   clf.DatabaseKeyPath,
+					Region:    clf.DatabaseRegion,
 					Auth:      clf.DatabaseAuth,
 					RDSCAPath: clf.DatabaseRDSCAPath,
 				},

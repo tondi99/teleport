@@ -529,6 +529,8 @@ type Database struct {
 	// Key is the client key.
 	Key []byte
 	//
+	Region string
+	//
 	Auth string
 	//
 	RDSCA []byte
