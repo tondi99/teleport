@@ -308,18 +308,19 @@ type sessionContext struct {
 func (s *Server) getConnectConfig(sessionCtx sessionContext) (*pgconn.Config, error) {
 	connString := fmt.Sprintf("postgres://%s@%s/?database=%s&sslmode=verify-ca",
 		sessionCtx.dbUser,
-		sessionCtx.db.Address,
+		sessionCtx.db.Endpoint,
 		sessionCtx.dbName)
 	connectConfig, err := pgconn.ParseConfig(connString)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	addr, err := utils.ParseAddr(sessionCtx.db.Address)
+	addr, err := utils.ParseAddr(sessionCtx.db.Endpoint)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 	if sessionCtx.db.Auth == "aws-iam" {
-		s.log.Debug("Generating AWS RDS auth token.")
+		s.log.Debug("Generating AWS RDS auth token for parameters: endpoint[%v] region[%v] user[%v].",
+			sessionCtx.db.Endpoint, sessionCtx.db.Region, sessionCtx.dbUser)
 		// TODO(r0mant): Allow supplying credentials via yaml config.
 		sess, err := session.NewSessionWithOptions(session.Options{
 			SharedConfigState: session.SharedConfigEnable,
@@ -329,7 +330,7 @@ func (s *Server) getConnectConfig(sessionCtx sessionContext) (*pgconn.Config, er
 		}
 		// Generated auth token will be used as a password.
 		connectConfig.Password, err = rdsutils.BuildAuthToken(
-			sessionCtx.db.Address,
+			sessionCtx.db.Endpoint,
 			sessionCtx.db.Region,
 			sessionCtx.dbUser,
 			sess.Config.Credentials)
@@ -339,11 +340,11 @@ func (s *Server) getConnectConfig(sessionCtx sessionContext) (*pgconn.Config, er
 		s.log.Debugf("Generated AWS RDS auth token: %q.", connectConfig.Password)
 		// Add RDS CA to the trusted pool.
 		caCertPool := x509.NewCertPool()
-		rdsCABytes, err := base64.StdEncoding.DecodeString(sessionCtx.db.RDSCA)
+		caBytes, err := base64.StdEncoding.DecodeString(sessionCtx.db.CACert)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-		if !caCertPool.AppendCertsFromPEM(rdsCABytes) {
+		if !caCertPool.AppendCertsFromPEM(caBytes) {
 			return nil, trace.BadParameter("failed to append RDS CA certificate to the pool")
 		}
 		connectConfig.TLSConfig = &tls.Config{
@@ -437,13 +438,27 @@ func (s *Server) handleConnection(conn net.Conn) error {
 		return trace.Wrap(err)
 	}
 
-	frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(frontendConn.Conn()), frontendConn.Conn())
+	hijackedConn, err := frontendConn.Hijack()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	//frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(frontendConn.Conn()), frontendConn.Conn())
+	frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(hijackedConn.Conn), hijackedConn.Conn)
 
 	s.log.Debug("Sending AuthenticationOk")
 	if err := backend.Send(&pgproto3.AuthenticationOk{}); err != nil {
 		return trace.Wrap(err)
 	}
 	s.log.Debug("Sent AuthenticationOk")
+
+	s.log.Debug("Sending parameter statuses")
+	for k, v := range hijackedConn.ParameterStatuses {
+		s.log.Debugf("Sending parameter status: name[%v] value[%v]", k, v)
+		if err := backend.Send(&pgproto3.ParameterStatus{Name: k, Value: v}); err != nil {
+			return trace.Wrap(err)
+		}
+	}
 
 	s.log.Debug("Sending ReadyForQuery")
 	if err := backend.Send(&pgproto3.ReadyForQuery{}); err != nil {

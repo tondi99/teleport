@@ -113,22 +113,18 @@ type CommandLineFlags struct {
 
 	// DatabaseName is the name of the database to proxy.
 	DatabaseName string
-	// DatabaseKind is the type of the proxied database.
-	DatabaseKind string
-	// DatabaseAddress is the address to connect to the proxied database.
-	DatabaseAddress string
+	// DatabaseDescription is an optional free-form database description.
+	DatabaseDescription string
+	// DatabaseProtocol is the type of the proxied database e.g. postgres or mysql.
+	DatabaseProtocol string
+	// DatabaseEndpoint is the address to connect to the proxied database.
+	DatabaseEndpoint string
 	// DatabaseCAPath is the database CA cert path.
 	DatabaseCAPath string
-	// DatabaseCertPath is the client cert path.
-	DatabaseCertPath string
-	// DatabaseKeyPath is the client key path.
-	DatabaseKeyPath string
-	//
+	// DatabaseRegion is an optional database cloud region e.g. when using AWS RDS.
 	DatabaseRegion string
-	//
+	// DatabaseAuth is the database auth type e.g. aws-iam.
 	DatabaseAuth string
-	//
-	DatabaseRDSCAPath string
 }
 
 // readConfigFile reads /etc/teleport.yaml (or whatever is passed via --config flag)
@@ -765,9 +761,9 @@ func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
 		// if err != nil {
 		// 	return trace.Wrap(err)
 		// }
-		var rdsCA []byte
-		if database.RDSCAPath != "" {
-			rdsCA, err = ioutil.ReadFile(database.RDSCAPath)
+		var caBytes []byte
+		if database.CAPath != "" {
+			caBytes, err = ioutil.ReadFile(database.CAPath)
 			if err != nil {
 				return trace.Wrap(err)
 			}
@@ -775,15 +771,13 @@ func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
 		// TODO(r0mant): Also parse static/dynamic labels like apps below.
 		cfg.Databases.Databases = append(cfg.Databases.Databases,
 			service.Database{
-				Name:     database.Name,
-				Protocol: database.Protocol,
-				Address:  database.Address,
-				// CACert:   caBytes,
-				// Cert:     certBytes,
-				// Key:      keyBytes,
-				Region: database.Region,
-				Auth:   database.Auth,
-				RDSCA:  rdsCA,
+				Name:        database.Name,
+				Description: database.Description,
+				Protocol:    database.Protocol,
+				Endpoint:    database.Endpoint,
+				CACert:      caBytes,
+				Region:      database.Region,
+				Auth:        database.Auth,
 			})
 	}
 	return nil
@@ -1092,15 +1086,13 @@ func Configure(clf *CommandLineFlags, cfg *service.Config) error {
 			},
 			Databases: []*Database{
 				{
-					Name:      clf.DatabaseName,
-					Protocol:  clf.DatabaseKind,
-					Address:   clf.DatabaseAddress,
-					CAPath:    clf.DatabaseCAPath,
-					CertPath:  clf.DatabaseCertPath,
-					KeyPath:   clf.DatabaseKeyPath,
-					Region:    clf.DatabaseRegion,
-					Auth:      clf.DatabaseAuth,
-					RDSCAPath: clf.DatabaseRDSCAPath,
+					Name:        clf.DatabaseName,
+					Description: clf.DatabaseDescription,
+					Protocol:    clf.DatabaseProtocol,
+					Endpoint:    clf.DatabaseEndpoint,
+					CAPath:      clf.DatabaseCAPath,
+					Region:      clf.DatabaseRegion,
+					Auth:        clf.DatabaseAuth,
 				},
 			},
 		}

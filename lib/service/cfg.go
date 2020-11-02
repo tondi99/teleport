@@ -518,22 +518,18 @@ type DatabasesConfig struct {
 type Database struct {
 	// Name is the database name, used to refer to in CLI.
 	Name string
+	// Description is a free-form database description.
+	Description string
 	// Protocol is the database type, e.g. postgres or mysql.
 	Protocol string
-	// Address is the database address.
-	Address string
-	// CACert is the database CA certificate.
+	// Endpoint is the database endpoint to connect to.
+	Endpoint string
+	// CACert is an optional database CA certificate.
 	CACert []byte
-	// Cert is the client certificate.
-	Cert []byte
-	// Key is the client key.
-	Key []byte
-	//
+	// Region is the cloud region database is running in when using AWS RDS.
 	Region string
-	//
+	// Auth is database authentication type e.g. aws-iam.
 	Auth string
-	//
-	RDSCA []byte
 }
 
 // AppsConfig configures application proxy service.

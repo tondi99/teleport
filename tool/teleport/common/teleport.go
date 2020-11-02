@@ -140,10 +140,10 @@ func Run(options Options) (executedCommand string, conf *service.Config) {
 	// TODO(r0mant): Add supported protocols.
 	start.Flag("db-protocol",
 		"Proxied database protocol, e.g. postgresql or mysql.").
-		StringVar(&ccf.DatabaseKind)
+		StringVar(&ccf.DatabaseProtocol)
 	start.Flag("db-address",
 		"Address proxied database is reachable at.").
-		StringVar(&ccf.DatabaseAddress)
+		StringVar(&ccf.DatabaseEndpoint)
 
 	// define start's usage info (we use kingpin's "alias" field for this)
 	start.Alias(usageNotes + usageExamples)

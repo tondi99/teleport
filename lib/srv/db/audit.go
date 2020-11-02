@@ -109,7 +109,7 @@ func (s *Server) emitSessionStartEvent(session sessionContext) error {
 		DatabaseMetadata: &events.DatabaseMetadata{
 			DBName:     session.db.Name,
 			DBProtocol: session.db.Protocol,
-			DBAddress:  session.db.Address,
+			DBEndpoint: session.db.Endpoint,
 			DBDatabase: session.dbName,
 			DBUser:     session.dbUser,
 		},
@@ -131,7 +131,7 @@ func (s *Server) emitSessionEndEvent(session sessionContext) error {
 		DatabaseMetadata: &events.DatabaseMetadata{
 			DBName:     session.db.Name,
 			DBProtocol: session.db.Protocol,
-			DBAddress:  session.db.Address,
+			DBEndpoint: session.db.Endpoint,
 			DBDatabase: session.dbName,
 			DBUser:     session.dbUser,
 		},
@@ -153,7 +153,7 @@ func (s *Server) emitQueryEvent(session sessionContext, query string) error {
 		DatabaseMetadata: &events.DatabaseMetadata{
 			DBName:     session.db.Name,
 			DBProtocol: session.db.Protocol,
-			DBAddress:  session.db.Address,
+			DBEndpoint: session.db.Endpoint,
 			DBDatabase: session.dbName,
 			DBUser:     session.dbUser,
 		},

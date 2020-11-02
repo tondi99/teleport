@@ -205,22 +205,18 @@ message Rewrite {
 message Database {
     // Name is the database identifier.
     string Name = 1 [ (gogoproto.jsontag) = "name" ];
-    // Protocol indicates the database type e.g. postgres or mysql.
-    string Protocol = 2 [ (gogoproto.jsontag) = "protocol" ];
-    // Address is the database connection address.
-    string Address = 3 [ (gogoproto.jsontag) = "address" ];
-    // CACert is base64-encoded database CA certificate.
-    string CACert = 4 [ (gogoproto.jsontag) = "ca_cert,omitempty" ];
-    // Cert is base64-encoded client certificate.
-    string Cert = 5 [ (gogoproto.jsontag) = "cert,omitempty" ];
-    // Key is base64-encoded client private key.
-    string Key = 6 [ (gogoproto.jsontag) = "key,omitempty" ];
-    //
-    string Region = 7 [ (gogoproto.jsontag) = "region,omitempty" ];
-    //
-    string Auth = 8 [ (gogoproto.jsontag) = "auth,omitempty" ];
-    //
-    string RDSCA = 9 [ (gogoproto.jsontag) = "rds_ca,omitempty" ];
+    // Description is a free-form text describing this database instance.
+    string Description = 2 [ (gogoproto.jsontag) = "description,omitempty" ];
+    // Protocol is the database type e.g. postgres, mysql, etc.
+    string Protocol = 3 [ (gogoproto.jsontag) = "protocol" ];
+    // Endpoint is the database connection endpoint.
+    string Endpoint = 4 [ (gogoproto.jsontag) = "endpoint" ];
+    // CACert is an optional base64-encoded database CA certificate.
+    string CACert = 5 [ (gogoproto.jsontag) = "ca_cert,omitempty" ];
+    // Region is an optional database cloud region e.g. when using AWS RDS.
+    string Region = 6 [ (gogoproto.jsontag) = "region,omitempty" ];
+    // Auth is the database authentication type.
+    string Auth = 7 [ (gogoproto.jsontag) = "auth,omitempty" ];
 }
 
 // CommandLabelV2 is a label that has a value as a result of the

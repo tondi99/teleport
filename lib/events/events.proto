@@ -1008,15 +1008,15 @@ message AppSessionRequest {
 
 // DatabaseMetadata contains common database information.
 message DatabaseMetadata {
-    // Name is the name of the proxied database from the configuration.
+    // DBName is the name of the proxied database from the configuration.
     string DBName = 1 [ (gogoproto.jsontag) = "db_name" ];
-    // Protocol is the database type, e.g. postgres or mysql.
+    // DBProtocol is the database type, e.g. postgres or mysql.
     string DBProtocol = 2 [ (gogoproto.jsontag) = "db_protocol" ];
-    // Address is the database address.
-    string DBAddress = 3 [ (gogoproto.jsontag) = "db_address" ];
-    // Database is the name of the database a user is connecting to.
+    // DBEndpoint is the database endpoint to connect to.
+    string DBEndpoint = 3 [ (gogoproto.jsontag) = "db_endpoint" ];
+    // DBDatabase is the name of the database a user is connecting to.
     string DBDatabase = 4 [ (gogoproto.jsontag) = "db_database" ];
-    // User is the database username used to connect.
+    // DBUser is the database username used to connect.
     string DBUser = 5 [ (gogoproto.jsontag) = "db_user" ];
 }
 

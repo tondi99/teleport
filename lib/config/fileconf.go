@@ -826,22 +826,18 @@ type Databases struct {
 type Database struct {
 	// Name is the name for the database proxy service.
 	Name string `yaml:"name"`
-	// Protocol is the database type e.g. "postgres" or "mysql".
+	// Description is an optional free-form database description.
+	Description string `yaml:"description,omitempty"`
+	// Protocol is the database type e.g. postgres, mysql, etc.
 	Protocol string `yaml:"protocol"`
-	// Address is the database address to connect to.
-	Address string `yaml:"address"`
-	// CAPath is the path to the database CA certificate.
-	CAPath string `yaml:"ca_path"`
-	// CertPath is the path to the client certificate.
-	CertPath string `yaml:"cert_path"`
-	// KeyPath is the path to the client key.
-	KeyPath string `yaml:"key_path"`
-	//
-	Region string `yaml:"region"`
-	//
-	Auth string `yaml:"auth"`
-	//
-	RDSCAPath string `yaml:"rds_ca_path"`
+	// Endpoint is the database address to connect to.
+	Endpoint string `yaml:"endpoint"`
+	// CAPath is an optional path to the database CA certificate.
+	CAPath string `yaml:"ca_path,omitempty"`
+	// Region is an optional database cloud region e.g. when using AWS RDS.
+	Region string `yaml:"region,omitempty"`
+	// Auth is database authentication type e.g. aws-iam.
+	Auth string `yaml:"auth,omitempty"`
 	// TODO(r0mant): Add static/dynamic labels.
 }
 
@@ -855,7 +851,7 @@ func (d *Database) Check() error {
 		return trace.BadParameter("missing %q database kind", d.Name)
 	}
 	// TODO(r0mant): Validate the address.
-	if d.Address == "" {
+	if d.Endpoint == "" {
 		return trace.BadParameter("missing %q database address", d.Name)
 	}
 	return nil

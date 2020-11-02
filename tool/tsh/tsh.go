@@ -1640,11 +1640,11 @@ func onDatabases(cf *CLIConf) {
 
 func showDatabases(servers []services.Server, verbose bool) {
 	// TODO(r0mant): Add verbose mode, add labels like Apps have.
-	t := asciitable.MakeTable([]string{"Name", "Protocol", "Address"})
+	t := asciitable.MakeTable([]string{"Name", "Protocol", "Description", "Endpoint"})
 	for _, server := range servers {
 		for _, db := range server.GetDatabases() {
 			t.AddRow([]string{
-				db.Name, db.Protocol, db.Address,
+				db.Name, db.Protocol, db.Description, db.Endpoint,
 			})
 		}
 	}

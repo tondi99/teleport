@@ -2701,15 +2701,13 @@ func (process *TeleportProcess) initDatabases() {
 		var databases []*services.Database
 		for _, database := range process.Config.Databases.Databases {
 			databases = append(databases, &services.Database{
-				Name:     database.Name,
-				Protocol: database.Protocol,
-				Address:  database.Address,
-				CACert:   base64.StdEncoding.EncodeToString(database.CACert),
-				Cert:     base64.StdEncoding.EncodeToString(database.Cert),
-				Key:      base64.StdEncoding.EncodeToString(database.Key),
-				Region:   database.Region,
-				Auth:     database.Auth,
-				RDSCA:    base64.StdEncoding.EncodeToString(database.RDSCA),
+				Name:        database.Name,
+				Description: database.Description,
+				Protocol:    database.Protocol,
+				Endpoint:    database.Endpoint,
+				CACert:      base64.StdEncoding.EncodeToString(database.CACert),
+				Region:      database.Region,
+				Auth:        database.Auth,
 			})
 		}
 

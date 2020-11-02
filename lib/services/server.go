@@ -530,14 +530,12 @@ const ServerSpecV2Schema = `{
 		  "additionalProperties": false,
 		  "properties": {
 			"name": {"type": "string"},
+			"description": {"type": "string"},
 			"protocol": {"type": "string"},
-			"address": {"type": "string"},
+			"endpoint": {"type": "string"},
 			"ca_cert": {"type": "string"},
-			"cert": {"type": "string"},
-			"key": {"type": "string"},
 			"region": {"type": "string"},
-			"auth": {"type": "string"},
-			"rds_ca": {"type": "string"}
+			"auth": {"type": "string"}
 		  }
 		}
 	  },
