@@ -48,6 +48,7 @@ import (
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/sshutils"
+	"github.com/gravitational/teleport/lib/sshutils/scp"
 	"github.com/gravitational/teleport/lib/utils"
 	"github.com/gravitational/teleport/tool/tsh/common"
 
@@ -189,6 +190,9 @@ type CLIConf struct {
 	// command/shell execution. This also requires stdin to be an interactive
 	// terminal.
 	EnableEscapeSequences bool
+
+	// PreserveAttrs preserves modification times, access times, and modes from the original file.
+	PreserveAttrs bool
 }
 
 func main() {
@@ -291,6 +295,7 @@ func Run(args []string) {
 	scp.Arg("from, to", "Source and destination to copy").Required().StringsVar(&cf.CopySpec)
 	scp.Flag("recursive", "Recursive copy of subdirectories").Short('r').BoolVar(&cf.RecursiveCopy)
 	scp.Flag("port", "Port to connect to on the remote host").Short('P').Int32Var(&cf.NodePort)
+	scp.Flag("preserve", "Preserves modification times, access times, and modes from the original file").Short('p').BoolVar(&cf.PreserveAttrs)
 	scp.Flag("quiet", "Quiet mode").Short('q').BoolVar(&cf.Quiet)
 	// ls
 	ls := app.Command("ls", "List remote SSH nodes")
@@ -1133,8 +1138,12 @@ func onSCP(cf *CLIConf) {
 	if err != nil {
 		utils.FatalError(err)
 	}
+	flags := scp.Flags{
+		Recursive:     cf.RecursiveCopy,
+		PreserveAttrs: cf.PreserveAttrs,
+	}
 	err = client.RetryWithRelogin(cf.Context, tc, func() error {
-		return tc.SCP(context.TODO(), cf.CopySpec, int(cf.NodePort), cf.RecursiveCopy, cf.Quiet)
+		return tc.SCP(context.TODO(), cf.CopySpec, int(cf.NodePort), flags, cf.Quiet)
 	})
 	if err != nil {
 		// exit with the same exit status as the failed command:
