@@ -146,13 +146,14 @@ clean:
 # Runs tests inside a build container
 #
 .PHONY: test
-test: FLAGS ?= -cover -race -count=10 -timeout=30m
+test: PACKAGES ?= ./lib/service/...
+test: FLAGS ?= -v -cover -race -count=50 -timeout=30m -check.f=TestMonitor
 test: buildbox
 	docker run $(DOCKERFLAGS) $(BCCFLAGS) $(NOROOT) -t $(BUILDBOX) \
 		/bin/bash -c \
 		"examples/etcd/start-etcd.sh & sleep 1; \
 		ssh-agent > external.agent.tmp && source external.agent.tmp; \
-		cd $(SRCDIR) && make TELEPORT_DEBUG=0 FLAGS=\"$(FLAGS)\" clean test"
+		cd $(SRCDIR) && make TELEPORT_DEBUG=0 PACKAGES=\"$(PACKAGES)\" FLAGS=\"$(FLAGS)\" clean test"
 
 .PHONY: integration
 integration: FLAGS ?= -v -cover -count=5 -timeout=1h
