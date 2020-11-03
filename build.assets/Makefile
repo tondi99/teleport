@@ -147,7 +147,7 @@ clean:
 #
 .PHONY: test
 test: PACKAGES ?= ./lib/service/...
-test: FLAGS ?= -v -cover -race -count=50 -timeout=30m -check.f=TestMonitor
+test: FLAGS ?= -v -cover -race -count=10 -timeout=30m
 test: buildbox
 	docker run $(DOCKERFLAGS) $(BCCFLAGS) $(NOROOT) -t $(BUILDBOX) \
 		/bin/bash -c \
