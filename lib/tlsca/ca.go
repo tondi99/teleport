@@ -94,6 +94,8 @@ type Identity struct {
 	// allows Teleport web proxy to route HTTP requests to the appropriate
 	// cluster and Teleport application proxy within the cluster.
 	RouteToApp RouteToApp
+	// RouteToDatabase contains routing information for databases.
+	RouteToDatabase RouteToDatabase
 }
 
 // RouteToApp holds routing information for applications.
@@ -111,6 +113,14 @@ type RouteToApp struct {
 
 	// ClusterName (and PublicAddr) are used to route requests issued with this
 	// certificate to the appropriate application proxy/cluster.
+	ClusterName string
+}
+
+// RouteToDatabase contains routing information for databases.
+type RouteToDatabase struct {
+	// DatabaseName is the name of the database to route requests to.
+	DatabaseName string
+	// ClusterName is the cluster the database is connected to.
 	ClusterName string
 }
 
@@ -167,6 +177,12 @@ var AppPublicAddrASN1ExtensionOID = asn1.ObjectIdentifier{1, 3, 9999, 1, 6}
 // AppClusterNameASN1ExtensionOID is an extension ID used to encode the application
 // cluster name into a certificate.
 var AppClusterNameASN1ExtensionOID = asn1.ObjectIdentifier{1, 3, 9999, 1, 5}
+
+//
+var DatabaseNameASN1ExtensionOID = asn1.ObjectIdentifier{1, 3, 9999, 2, 1}
+
+//
+var DatabaseClusterNameASN1ExtensionOID = asn1.ObjectIdentifier{1, 3, 9999, 2, 2}
 
 // Subject converts identity to X.509 subject name
 func (id *Identity) Subject() (pkix.Name, error) {
@@ -240,6 +256,22 @@ func (id *Identity) Subject() (pkix.Name, error) {
 			})
 	}
 
+	// Encode routing metadata for databases.
+	if id.RouteToDatabase.DatabaseName != "" {
+		subject.ExtraNames = append(subject.ExtraNames,
+			pkix.AttributeTypeAndValue{
+				Type:  DatabaseNameASN1ExtensionOID,
+				Value: id.RouteToDatabase.DatabaseName,
+			})
+	}
+	if id.RouteToDatabase.ClusterName != "" {
+		subject.ExtraNames = append(subject.ExtraNames,
+			pkix.AttributeTypeAndValue{
+				Type:  DatabaseClusterNameASN1ExtensionOID,
+				Value: id.RouteToDatabase.ClusterName,
+			})
+	}
+
 	return subject, nil
 }
 
@@ -293,6 +325,16 @@ func FromSubject(subject pkix.Name, expires time.Time) (*Identity, error) {
 			val, ok := attr.Value.(string)
 			if ok {
 				id.RouteToApp.ClusterName = val
+			}
+		case attr.Type.Equal(DatabaseNameASN1ExtensionOID):
+			val, ok := attr.Value.(string)
+			if ok {
+				id.RouteToDatabase.DatabaseName = val
+			}
+		case attr.Type.Equal(DatabaseClusterNameASN1ExtensionOID):
+			val, ok := attr.Value.(string)
+			if ok {
+				id.RouteToDatabase.ClusterName = val
 			}
 		}
 	}

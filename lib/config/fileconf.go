@@ -839,6 +839,7 @@ type Database struct {
 	// Auth is database authentication type e.g. aws-iam.
 	Auth string `yaml:"auth,omitempty"`
 	// TODO(r0mant): Add static/dynamic labels.
+	// TODO(r0mant): Add AWS credentials.
 }
 
 // Check validates the database proxy configuration.

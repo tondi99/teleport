@@ -208,6 +208,10 @@ type Config struct {
 	// cluster every time) but unspecified logic.
 	KubernetesCluster string
 
+	// DatabaseName specifies name of the database proxy server to issue
+	// certificate for.
+	DatabaseName string
+
 	// LocalForwardPorts are the local ports tsh listens on for port forwarding
 	// (parameters to -L ssh flag).
 	LocalForwardPorts ForwardedPorts
@@ -318,6 +322,9 @@ type ProfileStatus struct {
 
 	// KubeGroups are the kubernetes groups used by this profile.
 	KubeGroups []string
+
+	// Database is the database the user is logged into.
+	Database string
 
 	// ValidUntil is the time at which this SSH certificate will expire.
 	ValidUntil time.Time
@@ -497,6 +504,7 @@ func readProfile(profileDir string, profileName string) (*ProfileStatus, error) 
 		KubeCluster:    tlsID.KubernetesCluster,
 		KubeUsers:      tlsID.KubernetesUsers,
 		KubeGroups:     tlsID.KubernetesGroups,
+		Database:       tlsID.RouteToDatabase.DatabaseName,
 	}, nil
 }
 
@@ -2082,6 +2090,7 @@ func (tc *TeleportClient) directLogin(ctx context.Context, secondFactorType stri
 			Compatibility:     tc.CertificateFormat,
 			RouteToCluster:    tc.SiteName,
 			KubernetesCluster: tc.KubernetesCluster,
+			RouteToDatabase:   tc.DatabaseName,
 		},
 		User:     tc.Config.Username,
 		Password: password,
@@ -2105,6 +2114,7 @@ func (tc *TeleportClient) ssoLogin(ctx context.Context, connectorID string, pub 
 			Compatibility:     tc.CertificateFormat,
 			RouteToCluster:    tc.SiteName,
 			KubernetesCluster: tc.KubernetesCluster,
+			RouteToDatabase:   tc.DatabaseName,
 		},
 		ConnectorID: connectorID,
 		Protocol:    protocol,
@@ -2137,6 +2147,7 @@ func (tc *TeleportClient) u2fLogin(ctx context.Context, pub []byte) (*auth.SSHLo
 			Compatibility:     tc.CertificateFormat,
 			RouteToCluster:    tc.SiteName,
 			KubernetesCluster: tc.KubernetesCluster,
+			RouteToDatabase:   tc.DatabaseName,
 		},
 		User:     tc.Config.Username,
 		Password: password,

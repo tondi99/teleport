@@ -2538,14 +2538,18 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 	// and authorizing them, and then routing them to a respective database
 	// server over the reverse tunnel framework.
 	if listeners.db != nil {
-		log := logrus.WithField(trace.Component, teleport.Component(teleport.ComponentDB))
+		authorizer, err := auth.NewAuthorizer(conn.Client, conn.Client, conn.Client)
+		if err != nil {
+			return trace.Wrap(err)
+		}
 		tlsConfig, err := conn.ServerIdentity.TLSConfig(nil)
 		if err != nil {
 			return trace.Wrap(err)
 		}
 		dbProxyServer, err := db.NewProxyServer(db.ProxyServerConfig{
-			AccessPoint: accessPoint,
 			AuthClient:  conn.Client,
+			AccessPoint: accessPoint,
+			Authorizer:  authorizer,
 			Tunnel:      tsrv,
 			TLSConfig:   tlsConfig,
 		})
@@ -2553,6 +2557,7 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 			return trace.Wrap(err)
 		}
 		process.RegisterCriticalFunc("proxy.db", func() error {
+			log := logrus.WithField(trace.Component, teleport.Component(teleport.ComponentDB))
 			log.Infof("Starting Database proxy server on %v.", cfg.Proxy.WebAddr.Addr)
 			if err := dbProxyServer.Serve(listeners.db); err != nil {
 				log.WithError(err).Warn("Database proxy server exited with error.")

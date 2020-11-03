@@ -140,6 +140,8 @@ type Server struct {
 	mu     sync.RWMutex
 	server services.Server
 
+	middleware auth.Middleware
+
 	heartbeat     *srv.Heartbeat
 	dynamicLabels map[string]*labels.Dynamic
 }
@@ -157,6 +159,10 @@ func New(ctx context.Context, c *Config) (*Server, error) {
 			trace.Component: teleport.ComponentDB,
 		}),
 		server: c.Server,
+		middleware: auth.Middleware{
+			AccessPoint:   c.AccessPoint,
+			AcceptedUsage: []string{teleport.UsageDatabaseOnly},
+		},
 	}
 
 	s.c.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
@@ -266,28 +272,13 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	tlsConn := tls.Server(conn, s.c.TLSConfig)
 	err := tlsConn.Handshake()
 	if err != nil {
-		s.log.WithError(err).Error("Handshake failed")
+		s.log.WithError(err).Error("Failed to perform TLS handshake.")
 		return
 	}
-	if err := s.handleConnection(tlsConn); err != nil {
-		//if err := s.handleConnection(conn); err != nil {
-		s.log.WithError(err).Error("Failed to handle connection")
-	}
-	return
-	listener := newListener(context.TODO(), conn)
-	tlsListener := tls.NewListener(listener, s.c.TLSConfig)
-	for {
-		conn, err := tlsListener.Accept()
-		if err != nil {
-			s.log.WithError(err).Error("Failed to accept connection")
-			continue
-		}
-		s.log.Debugf("Accepted connection from %v", conn.RemoteAddr())
-		go func() {
-			if err := s.handleConnection(conn); err != nil {
-				s.log.WithError(err).Error("Failed to handle connection")
-			}
-		}()
+	err = s.middleware.HandleConnection(context.TODO(), tlsConn, s.handleConnection)
+	if err != nil {
+		s.log.WithError(err).Error("Failed to handle connection.")
+		return
 	}
 }
 
@@ -298,72 +289,15 @@ type sessionContext struct {
 	// db is the database instance information.
 	db *services.Database
 	// identity is the identity of the connecting teleport user.
-	identity *tlsca.Identity
+	identity tlsca.Identity
 	// dbUser is the requested database user.
 	dbUser string
 	// dbName is the requested database name.
 	dbName string
 }
 
-func (s *Server) getConnectConfig(sessionCtx sessionContext) (*pgconn.Config, error) {
-	connString := fmt.Sprintf("postgres://%s@%s/?database=%s&sslmode=verify-ca",
-		sessionCtx.dbUser,
-		sessionCtx.db.Endpoint,
-		sessionCtx.dbName)
-	connectConfig, err := pgconn.ParseConfig(connString)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	addr, err := utils.ParseAddr(sessionCtx.db.Endpoint)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	if sessionCtx.db.Auth == "aws-iam" {
-		s.log.Debug("Generating AWS RDS auth token for parameters: endpoint[%v] region[%v] user[%v].",
-			sessionCtx.db.Endpoint, sessionCtx.db.Region, sessionCtx.dbUser)
-		// TODO(r0mant): Allow supplying credentials via yaml config.
-		sess, err := session.NewSessionWithOptions(session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-		})
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		// Generated auth token will be used as a password.
-		connectConfig.Password, err = rdsutils.BuildAuthToken(
-			sessionCtx.db.Endpoint,
-			sessionCtx.db.Region,
-			sessionCtx.dbUser,
-			sess.Config.Credentials)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		s.log.Debugf("Generated AWS RDS auth token: %q.", connectConfig.Password)
-		// Add RDS CA to the trusted pool.
-		caCertPool := x509.NewCertPool()
-		caBytes, err := base64.StdEncoding.DecodeString(sessionCtx.db.CACert)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		if !caCertPool.AppendCertsFromPEM(caBytes) {
-			return nil, trace.BadParameter("failed to append RDS CA certificate to the pool")
-		}
-		connectConfig.TLSConfig = &tls.Config{
-			RootCAs:    caCertPool,
-			ServerName: addr.Host(),
-		}
-		return connectConfig, nil
-	}
-	// When connecting to an onprem database, generate certificate signed by
-	// our (host?) CA for mutual TLS.
-	connectConfig.TLSConfig, err = s.getClientTLSConfig(sessionCtx.dbUser, addr.Host(), time.Hour)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return connectConfig, nil
-}
-
-func (s *Server) handleConnection(conn net.Conn) error {
-	identity, err := extractIdentity(conn, s.log)
+func (s *Server) handleConnection(ctx context.Context, conn net.Conn) error {
+	sessionCtx, err := s.authorize(ctx)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -381,49 +315,10 @@ func (s *Server) handleConnection(conn net.Conn) error {
 	if !ok {
 		return trace.BadParameter("expected *pgproto3.StartupMessage, got %T", startupMessageI)
 	}
+	sessionCtx.dbName = startupMessage.Parameters["database"]
+	sessionCtx.dbUser = startupMessage.Parameters["user"]
 
-	// TODO(r0mant): Extract database from identity.
-	database := s.server.GetDatabases()[0]
-	s.log.Debugf("Will connect to database %#v", database)
-
-	sessionCtx := sessionContext{
-		id:       uuid.New(),
-		identity: identity,
-		db:       database,
-		dbName:   startupMessage.Parameters["database"],
-		dbUser:   startupMessage.Parameters["user"],
-	}
-
-	// caCertPool := x509.NewCertPool()
-	// caCertBytes, err := base64.StdEncoding.DecodeString(database.CACert)
-	// if err != nil {
-	// 	return trace.Wrap(err)
-	// }
-	// certBytes, err := base64.StdEncoding.DecodeString(database.Cert)
-	// if err != nil {
-	// 	return trace.Wrap(err)
-	// }
-	// keyBytes, err := base64.StdEncoding.DecodeString(database.Key)
-	// if err != nil {
-	// 	return trace.Wrap(err)
-	// }
-	// if !caCertPool.AppendCertsFromPEM(caCertBytes) {
-	// 	return trace.BadParameter("failed to append ca pem")
-	// }
-	// clientCert, err := tls.X509KeyPair(certBytes, keyBytes)
-	// if err != nil {
-	// 	return trace.Wrap(err)
-	// }
-	// connectConfig.TLSConfig = &tls.Config{
-	// 	Certificates: []tls.Certificate{clientCert},
-	// 	RootCAs:      caCertPool,
-	// 	ServerName:   addr.Host(),
-	// }
-	// fmt.Printf("%#v", s.c.TLSClientConfig)
-	// connectConfig.TLSConfig = s.c.TLSClientConfig
-	// connectConfig.TLSConfig.ServerName = addr.Host()
-
-	connectConfig, err := s.getConnectConfig(sessionCtx)
+	connectConfig, err := s.getConnectConfig(*sessionCtx)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -434,7 +329,7 @@ func (s *Server) handleConnection(conn net.Conn) error {
 		return trace.Wrap(err)
 	}
 
-	if err := s.emitSessionStartEvent(sessionCtx); err != nil {
+	if err := s.emitSessionStartEvent(*sessionCtx); err != nil {
 		return trace.Wrap(err)
 	}
 
@@ -480,12 +375,12 @@ func (s *Server) handleConnection(conn net.Conn) error {
 			switch msg := message.(type) {
 			case *pgproto3.Query:
 				log.Infof("---> Executing query %q", msg.String)
-				if err := s.emitQueryEvent(sessionCtx, msg.String); err != nil {
+				if err := s.emitQueryEvent(*sessionCtx, msg.String); err != nil {
 					log.WithError(err).Error("Failed to emit audit event.")
 				}
 			case *pgproto3.Terminate:
 				log.Infof("---> Session terminated")
-				if err := s.emitSessionEndEvent(sessionCtx); err != nil {
+				if err := s.emitSessionEndEvent(*sessionCtx); err != nil {
 					log.WithError(err).Error("Failed to emit audit event.")
 				}
 			}
@@ -523,17 +418,97 @@ func (s *Server) handleConnection(conn net.Conn) error {
 		}
 		log.Debug("Sent message")
 	}
+}
 
-	// tlsConn, ok := conn.(*tls.Conn)
-	// if !ok {
-	// 	return trace.BadParameter("expected tls.Conn, got %T", conn)
-	// }
-	// err := tlsConn.Handshake()
+func (s *Server) authorize(ctx context.Context) (*sessionContext, error) {
+	// Only allow local and remote identities to proxy to a database.
+	userType := ctx.Value(auth.ContextUser)
+	switch userType.(type) {
+	case auth.LocalUser, auth.RemoteUser:
+	default:
+		return nil, trace.BadParameter("invalid identity: %T", userType)
+	}
+	// Extract authorizing context and identity of the user from the request.
+	authContext, err := s.c.Authorizer.Authorize(ctx)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	identity := authContext.Identity.GetIdentity()
+	// Fetch the requested database.
+	var database *services.Database
+	for _, db := range s.server.GetDatabases() {
+		if db.Name == identity.RouteToDatabase.DatabaseName {
+			database = db
+		}
+	}
+	s.log.Debugf("Will connect to database %#v.", database)
+	// TODO(r0mant): Check that the identity has access to the database.
+	// err = authContext.Checker.CheckAccessToApp(defaults.Namespace, app)
 	// if err != nil {
-	// 	return trace.Wrap(err)
+	// 	return nil, trace.Wrap(err)
 	// }
-	// s.log.Debugf("%#v", tlsConn.ConnectionState())
-	return nil
+	return &sessionContext{
+		id:       uuid.New(),
+		db:       database,
+		identity: identity,
+	}, nil
+}
+
+func (s *Server) getConnectConfig(sessionCtx sessionContext) (*pgconn.Config, error) {
+	connString := fmt.Sprintf("postgres://%s@%s/?database=%s&sslmode=verify-ca",
+		sessionCtx.dbUser,
+		sessionCtx.db.Endpoint,
+		sessionCtx.dbName)
+	connectConfig, err := pgconn.ParseConfig(connString)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	addr, err := utils.ParseAddr(sessionCtx.db.Endpoint)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	if sessionCtx.db.Auth == "aws-iam" {
+		s.log.Debugf("Generating AWS RDS auth token for parameters: endpoint[%v] region[%v] user[%v].",
+			sessionCtx.db.Endpoint, sessionCtx.db.Region, sessionCtx.dbUser)
+		// TODO(r0mant): Allow supplying credentials via yaml config.
+		sess, err := session.NewSessionWithOptions(session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+		})
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		// Generated auth token will be used as a password.
+		connectConfig.Password, err = rdsutils.BuildAuthToken(
+			sessionCtx.db.Endpoint,
+			sessionCtx.db.Region,
+			sessionCtx.dbUser,
+			sess.Config.Credentials)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		s.log.Debugf("Generated AWS RDS auth token: %q.", connectConfig.Password)
+		// Add RDS CA to the trusted pool.
+		caCertPool := x509.NewCertPool()
+		caBytes, err := base64.StdEncoding.DecodeString(sessionCtx.db.CACert)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		if !caCertPool.AppendCertsFromPEM(caBytes) {
+			return nil, trace.BadParameter("failed to append RDS CA certificate to the pool")
+		}
+		connectConfig.TLSConfig = &tls.Config{
+			RootCAs:    caCertPool,
+			ServerName: addr.Host(),
+		}
+		return connectConfig, nil
+	}
+	// When connecting to an onprem database, generate certificate signed by
+	// our (host?) CA for mutual TLS.
+	connectConfig.TLSConfig, err = s.getClientTLSConfig(sessionCtx.dbUser, addr.Host(), time.Hour)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return connectConfig, nil
 }
 
 func (s *Server) getClientTLSConfig(username, host string, ttl time.Duration) (*tls.Config, error) {

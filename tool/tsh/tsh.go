@@ -104,6 +104,8 @@ type CLIConf struct {
 	SiteName string
 	// KubernetesCluster specifies the kubernetes cluster to login to.
 	KubernetesCluster string
+	// DatabaseName specifies the database proxy server to log into.
+	DatabaseName string
 	// Interactive, when set to true, launches remote command with the terminal attached
 	Interactive bool
 	// Quiet mode, -q command (disables progress printing)
@@ -318,6 +320,7 @@ func Run(args []string) {
 	// TODO(awly): unhide this flag in 5.0, after 'tsh kube ...' commands are
 	// implemented.
 	login.Flag("kube-cluster", "Name of the Kubernetes cluster to login to").Hidden().StringVar(&cf.KubernetesCluster)
+	login.Flag("db", "Database name to log into").StringVar(&cf.DatabaseName)
 	login.Alias(loginUsageFooter)
 
 	// logout deletes obtained session certificates in ~/.tsh
@@ -1222,6 +1225,9 @@ func makeClient(cf *CLIConf, useProfileLogin bool) (*client.TeleportClient, erro
 	if cf.KubernetesCluster != "" {
 		c.KubernetesCluster = cf.KubernetesCluster
 	}
+	if cf.DatabaseName != "" {
+		c.DatabaseName = cf.DatabaseName
+	}
 	// if host logins stored in profiles must be ignored...
 	if !useProfileLogin {
 		c.HostLogin = ""
@@ -1417,6 +1423,9 @@ func printStatus(debug bool, p *client.ProfileStatus, isActive bool) {
 		}
 	} else {
 		fmt.Printf("  Kubernetes:         disabled\n")
+	}
+	if p.Database != "" {
+		fmt.Printf("  Database:           %v\n", p.Database)
 	}
 	fmt.Printf("  Valid until:        %v [%v]\n", p.ValidUntil, humanDuration)
 	fmt.Printf("  Extensions:         %v\n", strings.Join(p.Extensions, ", "))

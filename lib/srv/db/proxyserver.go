@@ -45,17 +45,20 @@ import (
 type ProxyServer struct {
 	ProxyServerConfig
 	logrus.FieldLogger
+	middleware auth.Middleware
 }
 
 //
 type ProxyServerConfig struct {
+	// AuthClient is the authenticated client to the auth server.
+	AuthClient *auth.Client
 	// AccessPoint is the caching client connected to the auth server.
 	AccessPoint auth.AccessPoint
-	//
-	AuthClient *auth.Client
+	// Authorizer is responsible for authorizing user identities.
+	Authorizer auth.Authorizer
 	// Tunnel is the reverse tunnel server.
 	Tunnel reversetunnel.Server
-	//
+	// TLSConfig is the proxy server TLS configuration.
 	TLSConfig *tls.Config
 }
 
@@ -66,6 +69,9 @@ func (c *ProxyServerConfig) CheckAndSetDefaults() error {
 	}
 	if c.AuthClient == nil {
 		return trace.BadParameter("missing AuthClient")
+	}
+	if c.Authorizer == nil {
+		return trace.BadParameter("missing Authorizer")
 	}
 	if c.Tunnel == nil {
 		return trace.BadParameter("missing Tunnel")
@@ -84,6 +90,9 @@ func NewProxyServer(config ProxyServerConfig) (*ProxyServer, error) {
 	server := &ProxyServer{
 		ProxyServerConfig: config,
 		FieldLogger:       logrus.WithField(trace.Component, "proxy:db"),
+		middleware: auth.Middleware{
+			AccessPoint: config.AccessPoint,
+		},
 	}
 	// TODO(r0mant): Copy TLS config?
 	server.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
@@ -99,6 +108,7 @@ func (s *ProxyServer) Serve(listener net.Listener) error {
 			s.WithError(err).Error("Failed to accept connection.")
 			continue
 		}
+		// TODO(r0mant): Check supported protocol.
 		s.Debugf("Accepted connection from %v.", conn.RemoteAddr())
 		go func() {
 			if err := s.handleConnection(context.TODO(), conn); err != nil {
@@ -106,7 +116,6 @@ func (s *ProxyServer) Serve(listener net.Listener) error {
 			}
 		}()
 	}
-	return nil
 }
 
 func extractIdentity(conn net.Conn, log logrus.FieldLogger) (*tlsca.Identity, error) {
@@ -160,33 +169,18 @@ func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error
 			return trace.Wrap(err)
 		}
 
-		// tlsConn, ok := conn.(*tls.Conn)
-		// if !ok {
-		// 	return nil
-		// }
-
-		// certs := tlsConn.ConnectionState().PeerCertificates
-		// if len(certs) == 0 {
-		// 	return trace.NotFound("client didn't present any certificates")
-		// }
-
-		// s.Infof("Client presented certificate: SerialNumber[%v] Issuer[%v] Subject[%v]",
-		// 	certs[0].SerialNumber, certs[0].Issuer, certs[0].Subject)
-
-		// identity, err := tlsca.FromSubject(certs[0].Subject, certs[0].NotAfter)
-		// if err != nil {
-		// 	return trace.Wrap(err)
-		// }
-
-		// s.Infof("Client identity: %#v", identity)
-
-		// TODO(r0mant): Add authorization.
-
-		// TODO(r0mant): Add proper routing via RouteToDatabase identity field.
-
 		sites := s.Tunnel.GetSites()
 		s.Debugf("Available sites: %#v", sites)
-		site := sites[0]
+		var site reversetunnel.RemoteSite
+		for _, s := range sites {
+			if s.GetName() == identity.RouteToDatabase.ClusterName {
+				site = s
+				break
+			}
+		}
+		if site == nil {
+			return trace.NotFound("site %q not found", identity.RouteToDatabase.ClusterName)
+		}
 		s.Debugf("Using site: %#v", site)
 
 		dbServers, err := s.AccessPoint.GetDatabaseServers(ctx, defaults.Namespace)
@@ -194,12 +188,24 @@ func (s *ProxyServer) handleConnection(ctx context.Context, conn net.Conn) error
 			return trace.Wrap(err)
 		}
 		s.Debugf("Available database servers: %#v", dbServers)
+		if len(dbServers) == 0 {
+			return trace.NotFound("no available database servers")
+		}
 		dbServer := dbServers[0]
 		s.Debugf("Using database server: %#v", dbServer)
 
 		dbs := dbServer.GetDatabases()
 		s.Debugf("Available databases: %#v", dbs)
-		db := dbs[0]
+		var db *services.Database
+		for _, d := range dbs {
+			if d.Name == identity.RouteToDatabase.DatabaseName {
+				db = d
+				break
+			}
+		}
+		if db == nil {
+			return trace.NotFound("database %q not found", identity.RouteToDatabase.DatabaseName)
+		}
 		s.Debugf("Using database: %#v", db)
 
 		// s.Debug("Generating user cert")

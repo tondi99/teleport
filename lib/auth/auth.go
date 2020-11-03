@@ -448,6 +448,8 @@ type certRequest struct {
 	appPublicAddr string
 	// appClusterName is the name of the cluster this application is in.
 	appClusterName string
+	// routeToDatabase specifies the name of the database to encode.
+	routeToDatabase string
 }
 
 // GenerateUserTestCerts is used to generate user certificate, used internally for tests
@@ -630,6 +632,10 @@ func (a *Server) generateUserCert(req certRequest) (*certs, error) {
 			SessionID:   req.appSessionID,
 			PublicAddr:  req.appPublicAddr,
 			ClusterName: req.appClusterName,
+		},
+		RouteToDatabase: tlsca.RouteToDatabase{
+			DatabaseName: req.routeToDatabase,
+			ClusterName:  req.routeToCluster,
 		},
 	}
 	subject, err := identity.Subject()
