@@ -141,7 +141,7 @@ func (s *IntSuite) SetUpTest(c *check.C) {
 // newTeleport helper returns a created but not started Teleport instance pre-configured
 // with the current user os.user.Current().
 func (s *IntSuite) newUnstartedTeleport(c *check.C, logins []string, enableSSH bool) *TeleInstance {
-	t := NewInstance(InstanceConfig{ClusterName: Site, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	t := s.newTeleportInstance(c)
 	// use passed logins, but use suite's default login if nothing was passed
 	if len(logins) == 0 {
 		logins = []string{s.me.Username}
@@ -217,7 +217,7 @@ func (s *IntSuite) newTeleportIoT(c *check.C, logins []string) *TeleInstance {
 // Teleport instance with the passed in user, instance secrets, and Teleport
 // configuration.
 func (s *IntSuite) newTeleportWithConfig(c *check.C, logins []string, instanceSecrets []*InstanceSecrets, teleportConfig *service.Config) *TeleInstance {
-	t := NewInstance(InstanceConfig{ClusterName: Site, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	t := s.newTeleportInstance(c)
 
 	// use passed logins, but use suite's default login if nothing was passed
 	if len(logins) == 0 {
@@ -762,9 +762,8 @@ func (s *IntSuite) TestInteractiveReverseTunnel(c *check.C) {
 	s.verifySessionJoin(c, t)
 }
 
-// TestInteractive covers SSH into shell and joining the same session from another client
+// verifySessionJoin covers SSH into shell and joining the same session from another client
 func (s *IntSuite) verifySessionJoin(c *check.C, t *TeleInstance) {
-
 	sessionEndC := make(chan interface{})
 
 	// get a reference to site obj:
@@ -1037,14 +1036,7 @@ func (s *IntSuite) TestDisconnectScenarios(c *check.C) {
 }
 
 func (s *IntSuite) runDisconnectTest(c *check.C, tc disconnectTestCase) {
-	t := NewInstance(InstanceConfig{
-		ClusterName: Site,
-		HostID:      HostID,
-		NodeName:    Host,
-		Ports:       s.getPorts(5),
-		Priv:        s.priv,
-		Pub:         s.pub,
-	})
+	t := s.newTeleportInstance(c)
 	comment := check.Commentf(tc.comment)
 
 	username := s.me.Username
@@ -1257,8 +1249,8 @@ func (s *IntSuite) TestTwoClustersTunnel(c *check.C) {
 
 		username := s.me.Username
 
-		a := NewInstance(InstanceConfig{ClusterName: "site-A", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
-		b := NewInstance(InstanceConfig{ClusterName: "site-B", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+		a := s.newNamedTeleportInstance(c, "site-A")
+		b := s.newNamedTeleportInstance(c, "site-B")
 
 		a.AddUser(username, []string{username})
 		b.AddUser(username, []string{username})
@@ -1443,8 +1435,8 @@ func (s *IntSuite) TestTwoClustersProxy(c *check.C) {
 
 	username := s.me.Username
 
-	a := NewInstance(InstanceConfig{ClusterName: "site-A", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
-	b := NewInstance(InstanceConfig{ClusterName: "site-B", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	a := s.newNamedTeleportInstance(c, "site-A")
+	b := s.newNamedTeleportInstance(c, "site-B")
 
 	a.AddUser(username, []string{username})
 	b.AddUser(username, []string{username})
@@ -1480,8 +1472,8 @@ func (s *IntSuite) TestHA(c *check.C) {
 
 	username := s.me.Username
 
-	a := NewInstance(InstanceConfig{ClusterName: "cluster-a", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
-	b := NewInstance(InstanceConfig{ClusterName: "cluster-b", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	a := s.newNamedTeleportInstance(c, "cluster-a")
+	b := s.newNamedTeleportInstance(c, "cluster-b")
 
 	a.AddUser(username, []string{username})
 	b.AddUser(username, []string{username})
@@ -1499,7 +1491,7 @@ func (s *IntSuite) TestHA(c *check.C) {
 	// wait for both sites to see each other via their reverse tunnels (for up to 10 seconds)
 	abortTime := time.Now().Add(time.Second * 10)
 	for len(checkGetClusters(c, a.Tunnel)) < 2 && len(checkGetClusters(c, b.Tunnel)) < 2 {
-		time.Sleep(time.Millisecond * 2000)
+		time.Sleep(2 * time.Second)
 		if time.Now().After(abortTime) {
 			c.Fatalf("two sites do not see each other: tunnels are not working")
 		}
@@ -1515,7 +1507,6 @@ func (s *IntSuite) TestHA(c *check.C) {
 	c.Assert(err, check.IsNil)
 	output := &bytes.Buffer{}
 	tc.Stdout = output
-	c.Assert(err, check.IsNil)
 	// try to execute an SSH command using the same old client  to Site-B
 	// "site-A" and "site-B" reverse tunnels are supposed to reconnect,
 	// and 'tc' (client) is also supposed to reconnect
@@ -1532,7 +1523,7 @@ func (s *IntSuite) TestHA(c *check.C) {
 	// stop auth server a now
 	c.Assert(a.StopAuth(true), check.IsNil)
 
-	// try to execute an SSH command using the same old client  to Site-B
+	// try to execute an SSH command using the same old client to site-B
 	// "site-A" and "site-B" reverse tunnels are supposed to reconnect,
 	// and 'tc' (client) is also supposed to reconnect
 	for i := 0; i < 30; i++ {
@@ -1545,7 +1536,7 @@ func (s *IntSuite) TestHA(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	// stop cluster and remaining nodes
-	c.Assert(b.StopAll(), check.IsNil)
+	c.Assert(a.StopAll(), check.IsNil)
 	c.Assert(b.StopAll(), check.IsNil)
 }
 
@@ -1559,8 +1550,9 @@ func (s *IntSuite) TestMapRoles(c *check.C) {
 
 	clusterMain := "cluster-main"
 	clusterAux := "cluster-aux"
-	main := NewInstance(InstanceConfig{ClusterName: clusterMain, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
-	aux := NewInstance(InstanceConfig{ClusterName: clusterAux, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+
+	main := s.newNamedTeleportInstance(c, clusterMain)
+	aux := s.newNamedTeleportInstance(c, clusterAux)
 
 	// main cluster has a local user and belongs to role "main-devs"
 	mainDevs := "main-devs"
@@ -1837,8 +1829,17 @@ func (s *IntSuite) trustedClusters(c *check.C, test trustedClusterTest) {
 
 	clusterMain := "cluster-main"
 	clusterAux := "cluster-aux"
-	main := NewInstance(InstanceConfig{ClusterName: clusterMain, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub, MultiplexProxy: test.multiplex})
-	aux := NewInstance(InstanceConfig{ClusterName: clusterAux, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	main := NewInstance(InstanceConfig{
+		ClusterName:    clusterMain,
+		HostID:         HostID,
+		NodeName:       Host,
+		Ports:          s.getPorts(5),
+		Priv:           s.priv,
+		Pub:            s.pub,
+		MultiplexProxy: test.multiplex,
+		DataDir:        c.MkDir(),
+	})
+	aux := s.newNamedTeleportInstance(c, clusterAux)
 
 	// main cluster has a local user and belongs to role "main-devs" and "main-admins"
 	mainDevs := "main-devs"
@@ -2099,8 +2100,8 @@ func (s *IntSuite) TestTrustedTunnelNode(c *check.C) {
 
 	clusterMain := "cluster-main"
 	clusterAux := "cluster-aux"
-	main := NewInstance(InstanceConfig{ClusterName: clusterMain, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
-	aux := NewInstance(InstanceConfig{ClusterName: clusterAux, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	main := s.newNamedTeleportInstance(c, clusterMain)
+	aux := s.newNamedTeleportInstance(c, clusterAux)
 
 	// main cluster has a local user and belongs to role "main-devs"
 	mainDevs := "main-devs"
@@ -2262,8 +2263,8 @@ func (s *IntSuite) TestDiscoveryRecovers(c *check.C) {
 	go lb.Serve()
 	defer lb.Close()
 
-	remote := NewInstance(InstanceConfig{ClusterName: "cluster-remote", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
-	main := NewInstance(InstanceConfig{ClusterName: "cluster-main", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	remote := s.newNamedTeleportInstance(c, "cluster-remote")
+	main := s.newNamedTeleportInstance(c, "cluster-main")
 
 	remote.AddUser(username, []string{username})
 	main.AddUser(username, []string{username})
@@ -2398,8 +2399,8 @@ func (s *IntSuite) TestDiscovery(c *check.C) {
 	go lb.Serve()
 	defer lb.Close()
 
-	remote := NewInstance(InstanceConfig{ClusterName: "cluster-remote", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
-	main := NewInstance(InstanceConfig{ClusterName: "cluster-main", HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	remote := s.newNamedTeleportInstance(c, "cluster-remote")
+	main := s.newNamedTeleportInstance(c, "cluster-main")
 
 	remote.AddUser(username, []string{username})
 	main.AddUser(username, []string{username})
@@ -2536,7 +2537,7 @@ func (s *IntSuite) TestDiscoveryNode(c *check.C) {
 
 		tconf.Proxy.Enabled = true
 		tconf.Proxy.TunnelPublicAddrs = []utils.NetAddr{
-			utils.NetAddr{
+			{
 				AddrNetwork: "tcp",
 				Addr:        frontend.String(),
 			},
@@ -3264,7 +3265,7 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 	defer cancel()
 
 	tconf := rotationConfig(true)
-	t := NewInstance(InstanceConfig{ClusterName: Site, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	t := s.newTeleportInstance(c)
 	logins := []string{s.me.Username}
 	for _, login := range logins {
 		t.AddUser(login, []string{login})
@@ -3272,16 +3273,13 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 	config, err := t.GenerateConfig(nil, tconf)
 	c.Assert(err, check.IsNil)
 
-	serviceC := make(chan *service.TeleportProcess, 20)
-
+	serviceC := make(chan *svcStartResult, 1)
 	runErrCh := make(chan error, 1)
 	go func() {
 		runErrCh <- service.Run(ctx, *config, func(cfg *service.Config) (service.Process, error) {
 			svc, err := service.NewTeleport(cfg)
-			if err == nil {
-				serviceC <- svc
-			}
-			return svc, err
+			serviceC <- &svcStartResult{svc: svc, err: trace.Wrap(err)}
+			return svc, trace.Wrap(err)
 		})
 	}()
 
@@ -3402,6 +3400,11 @@ func (s *IntSuite) TestRotateSuccess(c *check.C) {
 	}
 }
 
+type svcStartResult struct {
+	svc *service.TeleportProcess
+	err error
+}
+
 // TestRotateRollback tests cert authority rollback
 func (s *IntSuite) TestRotateRollback(c *check.C) {
 	tr := utils.NewTracer(utils.ThisFunction()).Start()
@@ -3411,7 +3414,7 @@ func (s *IntSuite) TestRotateRollback(c *check.C) {
 	defer cancel()
 
 	tconf := rotationConfig(true)
-	t := NewInstance(InstanceConfig{ClusterName: Site, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	t := s.newTeleportInstance(c)
 	logins := []string{s.me.Username}
 	for _, login := range logins {
 		t.AddUser(login, []string{login})
@@ -3419,16 +3422,14 @@ func (s *IntSuite) TestRotateRollback(c *check.C) {
 	config, err := t.GenerateConfig(nil, tconf)
 	c.Assert(err, check.IsNil)
 
-	serviceC := make(chan *service.TeleportProcess, 20)
+	serviceC := make(chan *svcStartResult, 1)
 
 	runErrCh := make(chan error, 1)
 	go func() {
 		runErrCh <- service.Run(ctx, *config, func(cfg *service.Config) (service.Process, error) {
 			svc, err := service.NewTeleport(cfg)
-			if err == nil {
-				serviceC <- svc
-			}
-			return svc, err
+			serviceC <- &svcStartResult{svc: svc, err: trace.Wrap(err)}
+			return svc, trace.Wrap(err)
 		})
 	}()
 
@@ -3539,8 +3540,8 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 	clusterAux := "rotate-aux"
 
 	tconf := rotationConfig(false)
-	main := NewInstance(InstanceConfig{ClusterName: clusterMain, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
-	aux := NewInstance(InstanceConfig{ClusterName: clusterAux, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	main := s.newNamedTeleportInstance(c, clusterMain)
+	aux := s.newNamedTeleportInstance(c, clusterAux)
 
 	logins := []string{s.me.Username}
 	for _, login := range logins {
@@ -3549,15 +3550,13 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 	config, err := main.GenerateConfig(nil, tconf)
 	c.Assert(err, check.IsNil)
 
-	serviceC := make(chan *service.TeleportProcess, 20)
+	serviceC := make(chan *svcStartResult, 1)
 	runErrCh := make(chan error, 1)
 	go func() {
 		runErrCh <- service.Run(ctx, *config, func(cfg *service.Config) (service.Process, error) {
 			svc, err := service.NewTeleport(cfg)
-			if err == nil {
-				serviceC <- svc
-			}
-			return svc, err
+			serviceC <- &svcStartResult{svc: svc, err: trace.Wrap(err)}
+			return svc, trace.Wrap(err)
 		})
 	}()
 
@@ -3745,6 +3744,8 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 	case <-time.After(20 * time.Second):
 		c.Fatalf("failed to shut down the server")
 	}
+
+	c.Assert(aux.StopAll(), check.IsNil)
 }
 
 // TestRotateChangeSigningAlg tests the change of CA signing algorithm on
@@ -3752,7 +3753,7 @@ func (s *IntSuite) TestRotateTrustedClusters(c *check.C) {
 func (s *IntSuite) TestRotateChangeSigningAlg(c *check.C) {
 	// Start with an instance using default signing alg.
 	tconf := rotationConfig(true)
-	t := NewInstance(InstanceConfig{ClusterName: Site, HostID: HostID, NodeName: Host, Ports: s.getPorts(5), Priv: s.priv, Pub: s.pub})
+	t := s.newTeleportInstance(c)
 	logins := []string{s.me.Username}
 	for _, login := range logins {
 		t.AddUser(login, []string{login})
@@ -3760,7 +3761,7 @@ func (s *IntSuite) TestRotateChangeSigningAlg(c *check.C) {
 	config, err := t.GenerateConfig(nil, tconf)
 	c.Assert(err, check.IsNil)
 
-	serviceC := make(chan *service.TeleportProcess, 20)
+	serviceC := make(chan *svcStartResult, 1)
 	runErrCh := make(chan error, 1)
 
 	restart := func(svc *service.TeleportProcess, cancel func()) (*service.TeleportProcess, func()) {
@@ -3785,10 +3786,8 @@ func (s *IntSuite) TestRotateChangeSigningAlg(c *check.C) {
 		go func() {
 			runErrCh <- service.Run(ctx, *config, func(cfg *service.Config) (service.Process, error) {
 				svc, err := service.NewTeleport(cfg)
-				if err == nil {
-					serviceC <- svc
-				}
-				return svc, err
+				serviceC <- &svcStartResult{svc: svc, err: trace.Wrap(err)}
+				return svc, trace.Wrap(err)
 			})
 		}()
 
@@ -3919,14 +3918,16 @@ func waitForProcessEvent(svc *service.TeleportProcess, event string, timeout tim
 }
 
 // waitForProcessStart is waiting for the process to start
-func waitForProcessStart(serviceC chan *service.TeleportProcess) (*service.TeleportProcess, error) {
-	var svc *service.TeleportProcess
+func waitForProcessStart(serviceC chan *svcStartResult) (*service.TeleportProcess, error) {
 	select {
-	case svc = <-serviceC:
+	case result := <-serviceC:
+		if result.err != nil {
+			return nil, result.err
+		}
+		return result.svc, nil
 	case <-time.After(60 * time.Second):
 		return nil, trace.BadParameter("timeout waiting for service to start")
 	}
-	return svc, nil
 }
 
 // waitForReload waits for multiple events to happen:
@@ -3935,10 +3936,14 @@ func waitForProcessStart(serviceC chan *service.TeleportProcess) (*service.Telep
 // 2. old service, if present to shut down
 //
 // this helper function allows to serialize tests for reloads.
-func waitForReload(serviceC chan *service.TeleportProcess, old *service.TeleportProcess) (*service.TeleportProcess, error) {
+func waitForReload(serviceC chan *svcStartResult, old *service.TeleportProcess) (*service.TeleportProcess, error) {
 	var svc *service.TeleportProcess
 	select {
-	case svc = <-serviceC:
+	case result := <-serviceC:
+		if result.err != nil {
+			return nil, result.err
+		}
+		svc = result.svc
 	case <-time.After(60 * time.Second):
 		return nil, trace.BadParameter("timeout waiting for service to start")
 	}
@@ -3947,7 +3952,6 @@ func waitForReload(serviceC chan *service.TeleportProcess, old *service.Teleport
 	svc.WaitForEvent(context.TODO(), service.TeleportReadyEvent, eventC)
 	select {
 	case <-eventC:
-
 	case <-time.After(20 * time.Second):
 		return nil, trace.BadParameter("timeout waiting for service to broadcast ready status")
 	}
@@ -4844,7 +4848,7 @@ func runCommand(instance *TeleInstance, cmd []string, cfg ClientConfig, attempts
 	return output.String(), nil
 }
 
-// getPorts helper returns a range of unallocated ports available for litening on
+// getPorts helper returns a range of unallocated ports available for listening on
 func (s *IntSuite) getPorts(num int) []int {
 	if len(s.ports) < num {
 		panic("do not have enough ports! increase AllocatePortsNum constant")
@@ -4855,6 +4859,30 @@ func (s *IntSuite) getPorts(num int) []int {
 		ports[i] = p
 	}
 	return ports
+}
+
+func (s *IntSuite) newTeleportInstance(c *check.C) *TeleInstance {
+	return NewInstance(InstanceConfig{
+		ClusterName: Site,
+		HostID:      HostID,
+		NodeName:    Host,
+		Ports:       s.getPorts(5),
+		Priv:        s.priv,
+		Pub:         s.pub,
+		DataDir:     c.MkDir(),
+	})
+}
+
+func (s *IntSuite) newNamedTeleportInstance(c *check.C, clusterName string) *TeleInstance {
+	return NewInstance(InstanceConfig{
+		ClusterName: clusterName,
+		HostID:      HostID,
+		NodeName:    Host,
+		Ports:       s.getPorts(5),
+		Priv:        s.priv,
+		Pub:         s.pub,
+		DataDir:     c.MkDir(),
+	})
 }
 
 // Terminal emulates stdin+stdout for integration testing

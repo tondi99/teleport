@@ -101,6 +101,10 @@ type TeleInstance struct {
 
 	// UploadEventsC is a channel for upload events
 	UploadEventsC chan events.UploadEvent
+
+	// DataDir specifies the root directory for all state information
+	// used by the instance during a single test
+	DataDir string
 }
 
 type User struct {
@@ -155,6 +159,9 @@ type InstanceConfig struct {
 	Pub []byte
 	// MultiplexProxy uses the same port for web and SSH reverse tunnel proxy
 	MultiplexProxy bool
+	// DataDir specifies the root directory for all state information
+	// used by the instance  during a single test
+	DataDir string
 }
 
 // NewInstance creates a new Teleport process instance.
@@ -219,6 +226,7 @@ func NewInstance(cfg InstanceConfig) *TeleInstance {
 		Ports:         cfg.Ports,
 		Hostname:      cfg.NodeName,
 		UploadEventsC: make(chan events.UploadEvent, 100),
+		DataDir:       cfg.DataDir,
 	}
 	secrets := InstanceSecrets{
 		SiteName:     cfg.ClusterName,
@@ -476,8 +484,7 @@ func GenerateUserCreds(req UserCredsRequest) (*UserCreds, error) {
 
 // GenerateConfig generates instance config
 func (i *TeleInstance) GenerateConfig(trustedSecrets []*InstanceSecrets, tconf *service.Config) (*service.Config, error) {
-	var err error
-	dataDir, err := ioutil.TempDir("", "cluster-"+i.Secrets.SiteName)
+	dataDir, err := ioutil.TempDir(i.DataDir, "cluster-"+i.Secrets.SiteName)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -520,18 +527,18 @@ func (i *TeleInstance) GenerateConfig(trustedSecrets []*InstanceSecrets, tconf *
 	tconf.HostUUID = i.Secrets.GetIdentity().ID.HostUUID
 	tconf.SSH.Addr.Addr = net.JoinHostPort(i.Hostname, i.GetPortSSH())
 	tconf.SSH.PublicAddrs = []utils.NetAddr{
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Loopback,
 		},
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Host,
 		},
 	}
 	tconf.Auth.SSHAddr.Addr = net.JoinHostPort(i.Hostname, i.GetPortAuth())
 	tconf.Auth.PublicAddrs = []utils.NetAddr{
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        i.Hostname,
 		},
@@ -539,15 +546,15 @@ func (i *TeleInstance) GenerateConfig(trustedSecrets []*InstanceSecrets, tconf *
 	tconf.Proxy.SSHAddr.Addr = net.JoinHostPort(i.Hostname, i.GetPortProxy())
 	tconf.Proxy.WebAddr.Addr = net.JoinHostPort(i.Hostname, i.GetPortWeb())
 	tconf.Proxy.PublicAddrs = []utils.NetAddr{
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        i.Hostname,
 		},
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Loopback,
 		},
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Host,
 		},
@@ -596,7 +603,7 @@ func (i *TeleInstance) CreateEx(trustedSecrets []*InstanceSecrets, tconf *servic
 			return trace.Wrap(err)
 		}
 		// set hardcode traits to trigger new style certificates
-		teleUser.SetTraits(map[string][]string{"testing": []string{"integration"}})
+		teleUser.SetTraits(map[string][]string{"testing": {"integration"}})
 		if len(user.Roles) == 0 {
 			role := services.RoleForUser(teleUser)
 			role.SetLogins(services.Allow, user.AllowedLogins)
@@ -654,7 +661,7 @@ func (i *TeleInstance) StartReverseTunnelNode(tconf *service.Config) (*service.T
 
 // startNode starts a node and connects it to the cluster.
 func (i *TeleInstance) startNode(tconf *service.Config, reverseTunnel bool) (*service.TeleportProcess, error) {
-	dataDir, err := ioutil.TempDir("", "cluster-"+i.Secrets.SiteName)
+	dataDir, err := ioutil.TempDir(i.DataDir, "cluster-"+i.Secrets.SiteName)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -675,11 +682,11 @@ func (i *TeleInstance) startNode(tconf *service.Config, reverseTunnel bool) (*se
 		RecentTTL: &ttl,
 	}
 	tconf.SSH.PublicAddrs = []utils.NetAddr{
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Loopback,
 		},
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Host,
 		},
@@ -715,7 +722,7 @@ func (i *TeleInstance) startNode(tconf *service.Config, reverseTunnel bool) (*se
 // StartNodeAndProxy starts a SSH node and a Proxy Server and connects it to
 // the cluster.
 func (i *TeleInstance) StartNodeAndProxy(name string, sshPort, proxyWebPort, proxySSHPort int) error {
-	dataDir, err := ioutil.TempDir("", "cluster-"+i.Secrets.SiteName)
+	dataDir, err := ioutil.TempDir(i.DataDir, "cluster-"+i.Secrets.SiteName)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -746,11 +753,11 @@ func (i *TeleInstance) StartNodeAndProxy(name string, sshPort, proxyWebPort, pro
 	tconf.SSH.Enabled = true
 	tconf.SSH.Addr.Addr = net.JoinHostPort(i.Hostname, fmt.Sprintf("%v", sshPort))
 	tconf.SSH.PublicAddrs = []utils.NetAddr{
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Loopback,
 		},
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Host,
 		},
@@ -796,7 +803,7 @@ type ProxyConfig struct {
 
 // StartProxy starts another Proxy Server and connects it to the cluster.
 func (i *TeleInstance) StartProxy(cfg ProxyConfig) (reversetunnel.Server, error) {
-	dataDir, err := ioutil.TempDir("", "cluster-"+i.Secrets.SiteName+"-"+cfg.Name)
+	dataDir, err := ioutil.TempDir(i.DataDir, "cluster-"+i.Secrets.SiteName+"-"+cfg.Name)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -819,11 +826,11 @@ func (i *TeleInstance) StartProxy(cfg ProxyConfig) (reversetunnel.Server, error)
 	tconf.Proxy.Enabled = true
 	tconf.Proxy.SSHAddr.Addr = net.JoinHostPort(i.Hostname, fmt.Sprintf("%v", cfg.SSHPort))
 	tconf.Proxy.PublicAddrs = []utils.NetAddr{
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Loopback,
 		},
-		utils.NetAddr{
+		{
 			AddrNetwork: "tcp",
 			Addr:        Host,
 		},
@@ -1455,17 +1462,10 @@ func createAgent(me *user.User, privateKeyByte []byte, certificateBytes []byte) 
 }
 
 func closeAgent(teleAgent *teleagent.AgentServer, socketDirPath string) error {
-	err := teleAgent.Close()
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	err = os.RemoveAll(socketDirPath)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	return nil
+	return trace.NewAggregate(
+		teleAgent.Close(),
+		os.RemoveAll(socketDirPath),
+	)
 }
 
 func fatalIf(err error) {
