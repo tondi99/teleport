@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"log"
 	"time"
 
@@ -52,13 +50,4 @@ func tokenCRUD(ctx context.Context, client *auth.Client) {
 	}
 
 	log.Println("Updated token")
-}
-
-// Helper function to generate random tokens
-func randomHex(n int) (string, error) {
-	bytes := make([]byte, n)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
 }
