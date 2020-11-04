@@ -519,25 +519,20 @@ func (a *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.Handler.ServeHTTP(w, requestWithContext)
 }
 
-// ConnectionHandler is the function type that accepts the raw connection and
-// the context enriched with information about the user identity.
-type ConnectionHandler func(context.Context, net.Conn) error
-
-// HandleConnection takes a raw connection, enriches the context with the
-// information about the user identity extracted from it and passes it to
-// the provided handler.
-func (a *Middleware) HandleConnection(ctx context.Context, conn net.Conn, handler ConnectionHandler) error {
+// WrapContext enriches the provided context with the identity information
+// extracted from the provided TLS connection.
+func (a *Middleware) WrapContext(ctx context.Context, conn net.Conn) (context.Context, error) {
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
-		log.Warn("Expected tls connection, got %T.", conn)
-		return trace.AccessDenied("missing authentication")
+		log.Warnf("Expected tls connection, got %T.", conn)
+		return nil, trace.AccessDenied("missing authentication")
 	}
 	user, err := a.GetUser(tlsConn.ConnectionState())
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
 	requestWithContext := context.WithValue(ctx, ContextUser, user)
-	return handler(requestWithContext, tlsConn)
+	return requestWithContext, nil
 }
 
 // ClientCertPool returns trusted x509 cerificate authority pool

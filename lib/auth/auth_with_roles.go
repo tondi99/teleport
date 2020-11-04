@@ -2081,12 +2081,27 @@ func (a *ServerWithRoles) DeleteAllDatabaseServers(ctx context.Context, namespac
 	return a.authServer.DeleteAllAppServers(ctx, namespace)
 }
 
-// ...
-func (a *ServerWithRoles) SignDatabaseCSR(ctx context.Context, req *proto.SignDatabaseCSRRequest) (*proto.SignDatabaseCSRResponse, error) {
+// SignDatabaseCSR generates a client certificate used by proxy when talking
+// to a remote database service.
+func (a *ServerWithRoles) SignDatabaseCSR(ctx context.Context, req *proto.DatabaseCSRRequest) (*proto.DatabaseCSRResponse, error) {
+	// Only proxy is allowed to request this certificate when proxying
+	// database client connection to a remote database service.
 	if !a.hasBuiltinRole(string(teleport.RoleProxy)) {
-		return nil, trace.AccessDenied("this request can be only executed by a proxy")
+		return nil, trace.AccessDenied("this request can only be executed by a proxy service")
 	}
 	return a.authServer.SignDatabaseCSR(ctx, req)
+}
+
+// GenerateDatabaseCert generates a certificate used by a database
+// to authenticate with the database instance
+func (a *ServerWithRoles) GenerateDatabaseCert(ctx context.Context, req *proto.DatabaseCertRequest) (*proto.DatabaseCertResponse, error) {
+	// This certificate can be requested only by a database service when
+	// initiating connection to a database instance, or by an admin when
+	// generating certificates for a database instance.
+	if !a.hasBuiltinRole(string(teleport.RoleDatabase)) && !a.hasBuiltinRole(string(teleport.RoleAdmin)) {
+		return nil, trace.AccessDenied("this request can only be executed by a database service or an admin")
+	}
+	return a.authServer.GenerateDatabaseCert(ctx, req)
 }
 
 // GetAppServers gets all application servers.

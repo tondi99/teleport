@@ -19,30 +19,21 @@ package db
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/base64"
-	"fmt"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/auth"
-	"github.com/gravitational/teleport/lib/auth/native"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/labels"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/srv"
-	"github.com/gravitational/teleport/lib/sshutils"
-	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
 
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/rds/rdsutils"
 	"github.com/gravitational/trace"
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgproto3/v2"
 	"github.com/jonboulle/clockwork"
 	"github.com/pborman/uuid"
 	"github.com/sirupsen/logrus"
@@ -69,21 +60,23 @@ type Config struct {
 	// TLSConfig is the *tls.Config for this server.
 	TLSConfig *tls.Config
 
-	//
-	TLSClientConfig *tls.Config
-
 	// CipherSuites is the list of TLS cipher suites that have been configured
 	// for this process.
 	CipherSuites []uint16
 
-	// Authorizer is used to authorize requests.
+	// Authorizer is used to authorize requests coming from proxy.
 	Authorizer auth.Authorizer
 
 	// GetRotation returns the certificate rotation state.
 	GetRotation RotationGetter
 
-	// Server contains the list of applications that will be proxied.
+	// Server contains the list of databaes that will be proxied.
 	Server services.Server
+
+	// Credentials are credentials to AWS API.
+	//
+	// Must have permissions to generate RDS auth tokens.
+	Credentials *credentials.Credentials
 
 	// OnHeartbeat is called after every heartbeat. Used to update process state.
 	OnHeartbeat func(error)
@@ -107,9 +100,6 @@ func (c *Config) CheckAndSetDefaults() error {
 	if c.TLSConfig == nil {
 		return trace.BadParameter("tls config missing")
 	}
-	if c.TLSClientConfig == nil {
-		return trace.BadParameter("tls client config missing")
-	}
 	if len(c.CipherSuites) == 0 {
 		return trace.BadParameter("cipersuites missing")
 	}
@@ -124,6 +114,17 @@ func (c *Config) CheckAndSetDefaults() error {
 	}
 	if c.OnHeartbeat == nil {
 		return trace.BadParameter("heartbeat missing")
+	}
+	if c.Credentials == nil {
+		// TODO(r0mant): Allow supplying credentials via yaml config.
+		session, err := session.NewSessionWithOptions(session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+		})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		// TODO(r0mant): Verify credentials have permission to generate RDS tokens.
+		c.Credentials = session.Config.Credentials
 	}
 	return nil
 }
@@ -268,32 +269,32 @@ func (s *Server) ForceHeartbeat() error {
 
 // HandleConnection ...
 func (s *Server) HandleConnection(conn net.Conn) {
-	s.log.Debugf("HandleConnection(%#v)", conn)
+	s.log.Debugf("Accepted connection from %v.", conn.RemoteAddr())
+	// Upgrade the connection to TLS since the other side of the reverse
+	// tunnel connection (proxy) will initiate a handshake.
 	tlsConn := tls.Server(conn, s.c.TLSConfig)
+	// Perform the hanshake explicitly, normally it should be performed
+	// on the first read/write but when the connection is passed over
+	// reverse tunnel it doesn't happen for some reason.
 	err := tlsConn.Handshake()
 	if err != nil {
 		s.log.WithError(err).Error("Failed to perform TLS handshake.")
 		return
 	}
-	err = s.middleware.HandleConnection(context.TODO(), tlsConn, s.handleConnection)
+	// Now that handshake has completed and the client has sent us a
+	// certificate, extract identity information from it.
+	ctx, err := s.middleware.WrapContext(context.TODO(), tlsConn)
+	if err != nil {
+		s.log.WithError(err).Error("Failed to extract identity from connection.")
+		return
+	}
+	// Dispatch the connection for processing by an appropriate database
+	// service.
+	err = s.handleConnection(ctx, tlsConn)
 	if err != nil {
 		s.log.WithError(err).Error("Failed to handle connection.")
 		return
 	}
-}
-
-// sessionContext contains information about a database session.
-type sessionContext struct {
-	// id is the unique session id.
-	id string
-	// db is the database instance information.
-	db *services.Database
-	// identity is the identity of the connecting teleport user.
-	identity tlsca.Identity
-	// dbUser is the requested database user.
-	dbUser string
-	// dbName is the requested database name.
-	dbName string
 }
 
 func (s *Server) handleConnection(ctx context.Context, conn net.Conn) error {
@@ -301,123 +302,20 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		return trace.Wrap(err)
 	}
-
-	backend := pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn)
-
-	s.log.Debug("Waiting for startup message")
-	startupMessageI, err := backend.ReceiveStartupMessage()
+	engine := &postgresEngine{
+		authClient:     s.c.AuthClient,
+		credentials:    s.c.Credentials,
+		onSessionStart: s.emitSessionStartEvent,
+		onSessionEnd:   s.emitSessionEndEvent,
+		onQuery:        s.emitQueryEvent,
+		clock:          s.c.Clock,
+		FieldLogger:    s.log,
+	}
+	err = engine.handleConnection(ctx, sessionCtx, conn)
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	s.log.Debugf("Received startup message: %#v.", startupMessageI)
-
-	startupMessage, ok := startupMessageI.(*pgproto3.StartupMessage)
-	if !ok {
-		return trace.BadParameter("expected *pgproto3.StartupMessage, got %T", startupMessageI)
-	}
-	sessionCtx.dbName = startupMessage.Parameters["database"]
-	sessionCtx.dbUser = startupMessage.Parameters["user"]
-
-	connectConfig, err := s.getConnectConfig(*sessionCtx)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	// Connect to the backend database.
-	frontendConn, err := pgconn.ConnectConfig(context.TODO(), connectConfig)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	if err := s.emitSessionStartEvent(*sessionCtx); err != nil {
-		return trace.Wrap(err)
-	}
-
-	hijackedConn, err := frontendConn.Hijack()
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	//frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(frontendConn.Conn()), frontendConn.Conn())
-	frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(hijackedConn.Conn), hijackedConn.Conn)
-
-	s.log.Debug("Sending AuthenticationOk")
-	if err := backend.Send(&pgproto3.AuthenticationOk{}); err != nil {
-		return trace.Wrap(err)
-	}
-	s.log.Debug("Sent AuthenticationOk")
-
-	s.log.Debug("Sending parameter statuses")
-	for k, v := range hijackedConn.ParameterStatuses {
-		s.log.Debugf("Sending parameter status: name[%v] value[%v]", k, v)
-		if err := backend.Send(&pgproto3.ParameterStatus{Name: k, Value: v}); err != nil {
-			return trace.Wrap(err)
-		}
-	}
-
-	s.log.Debug("Sending ReadyForQuery")
-	if err := backend.Send(&pgproto3.ReadyForQuery{}); err != nil {
-		return trace.Wrap(err)
-	}
-	s.log.Debug("Sent ReadyForQuery")
-
-	go func() {
-		log := s.log.WithField(trace.Component, "backend")
-		defer log.Debug("Exited.")
-		for {
-			log.Debug("Receiving message")
-			message, err := backend.Receive()
-			if err != nil {
-				log.WithError(err).Error("Failed to receive message from client")
-				return
-			}
-			log.Debugf("Received message: %#v", message)
-			switch msg := message.(type) {
-			case *pgproto3.Query:
-				log.Infof("---> Executing query %q", msg.String)
-				if err := s.emitQueryEvent(*sessionCtx, msg.String); err != nil {
-					log.WithError(err).Error("Failed to emit audit event.")
-				}
-			case *pgproto3.Terminate:
-				log.Infof("---> Session terminated")
-				if err := s.emitSessionEndEvent(*sessionCtx); err != nil {
-					log.WithError(err).Error("Failed to emit audit event.")
-				}
-			}
-			err = frontend.Send(message)
-			if err != nil {
-				log.WithError(err).Error("Failed to send message from client to server")
-				return
-			}
-			log.Debug("Sent message")
-		}
-	}()
-
-	log := s.log.WithField(trace.Component, "frontend")
-	defer log.Debug("Exited.")
-	for {
-		log.Debug("Receiving message")
-		message, err := frontend.Receive()
-		if err != nil {
-			log.WithError(err).Error("Failed to receive message from server")
-			return trace.Wrap(err)
-		}
-		log.Debugf("Received message: %#v", message)
-		switch msg := message.(type) {
-		case *pgproto3.ErrorResponse:
-			log.Warnf("<--- Query completed with error %q", msg.Message)
-		case *pgproto3.DataRow:
-			log.Infof("<--- Query returned data row with %v columns", len(msg.Values))
-		case *pgproto3.CommandComplete:
-			log.Infof("<--- Query completed")
-		}
-		err = backend.Send(message)
-		if err != nil {
-			log.WithError(err).Error("Failed to send message from server to client")
-			return trace.Wrap(err)
-		}
-		log.Debug("Sent message")
-	}
+	return nil
 }
 
 func (s *Server) authorize(ctx context.Context) (*sessionContext, error) {
@@ -451,122 +349,6 @@ func (s *Server) authorize(ctx context.Context) (*sessionContext, error) {
 		id:       uuid.New(),
 		db:       database,
 		identity: identity,
-	}, nil
-}
-
-func (s *Server) getConnectConfig(sessionCtx sessionContext) (*pgconn.Config, error) {
-	connString := fmt.Sprintf("postgres://%s@%s/?database=%s&sslmode=verify-ca",
-		sessionCtx.dbUser,
-		sessionCtx.db.Endpoint,
-		sessionCtx.dbName)
-	connectConfig, err := pgconn.ParseConfig(connString)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	addr, err := utils.ParseAddr(sessionCtx.db.Endpoint)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	if sessionCtx.db.Auth == "aws-iam" {
-		s.log.Debugf("Generating AWS RDS auth token for parameters: endpoint[%v] region[%v] user[%v].",
-			sessionCtx.db.Endpoint, sessionCtx.db.Region, sessionCtx.dbUser)
-		// TODO(r0mant): Allow supplying credentials via yaml config.
-		sess, err := session.NewSessionWithOptions(session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-		})
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		// Generated auth token will be used as a password.
-		connectConfig.Password, err = rdsutils.BuildAuthToken(
-			sessionCtx.db.Endpoint,
-			sessionCtx.db.Region,
-			sessionCtx.dbUser,
-			sess.Config.Credentials)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		s.log.Debugf("Generated AWS RDS auth token: %q.", connectConfig.Password)
-		// Add RDS CA to the trusted pool.
-		caCertPool := x509.NewCertPool()
-		caBytes, err := base64.StdEncoding.DecodeString(sessionCtx.db.CACert)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		if !caCertPool.AppendCertsFromPEM(caBytes) {
-			return nil, trace.BadParameter("failed to append RDS CA certificate to the pool")
-		}
-		connectConfig.TLSConfig = &tls.Config{
-			RootCAs:    caCertPool,
-			ServerName: addr.Host(),
-		}
-		return connectConfig, nil
-	}
-	// When connecting to an onprem database, generate certificate signed by
-	// our (host?) CA for mutual TLS.
-	connectConfig.TLSConfig, err = s.getClientTLSConfig(sessionCtx.dbUser, addr.Host(), time.Hour)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return connectConfig, nil
-}
-
-func (s *Server) getClientTLSConfig(username, host string, ttl time.Duration) (*tls.Config, error) {
-	s.log.Debug("Generating client certificate")
-	privateBytes, publicBytes, err := native.GenerateKeyPair("")
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	// certs, err := s.c.AuthClient.GenerateUserCerts(context.TODO(), proto.UserCertsRequest{
-	// 	PublicKey: publicBytes,
-	// 	Username:  username,
-	// 	Expires:   time.Now().UTC().Add(ttl),
-	// })
-	// if err != nil {
-	// 	return nil, trace.Wrap(err)
-	// }
-	clusterName, err := s.c.AuthClient.GetClusterName()
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	certAuthority, err := s.c.AuthClient.GetCertAuthority(services.CertAuthID{
-		Type:       services.UserCA,
-		DomainName: clusterName.GetClusterName(),
-	}, true)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	tlsAuthority, err := certAuthority.TLSCA()
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	cryptoPublicKey, err := sshutils.CryptoPublicKey(publicBytes)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	certBytes, err := tlsAuthority.GenerateCertificate(tlsca.CertificateRequest{
-		PublicKey: cryptoPublicKey,
-		Subject:   pkix.Name{CommonName: username},
-		NotAfter:  time.Now().UTC().Add(ttl),
-	})
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	clientCert, err := tls.X509KeyPair(certBytes, privateBytes)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	s.log.Debugf("Generated client certificate: %#v", clientCert)
-	caCertPool := x509.NewCertPool()
-	for _, keypair := range certAuthority.GetTLSKeyPairs() {
-		if !caCertPool.AppendCertsFromPEM(keypair.Cert) {
-			return nil, trace.BadParameter("failed to append ca pem")
-		}
-	}
-	return &tls.Config{
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      caCertPool,
-		ServerName:   host,
 	}, nil
 }
 

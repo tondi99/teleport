@@ -29,8 +29,47 @@ import (
 	"github.com/gravitational/trace"
 )
 
-//
-func (s *Server) SignDatabaseCSR(ctx context.Context, req *proto.SignDatabaseCSRRequest) (*proto.SignDatabaseCSRResponse, error) {
+// GenerateDatabaseCert generates client certificate used by a database
+// service to authenticate with the database instance.
+func (s *Server) GenerateDatabaseCert(ctx context.Context, req *proto.DatabaseCertRequest) (*proto.DatabaseCertResponse, error) {
+	csr, err := tlsca.ParseCertificateRequestPEM(req.CSR)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	clusterName, err := s.GetClusterName()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	hostCA, err := s.GetCertAuthority(services.CertAuthID{
+		Type:       services.HostCA,
+		DomainName: clusterName.GetClusterName(),
+	}, true)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	tlsCA, err := hostCA.TLSCA()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	cert, err := tlsCA.GenerateCertificate(tlsca.CertificateRequest{
+		Clock:     s.clock,
+		PublicKey: csr.PublicKey,
+		Subject:   csr.Subject,
+		NotAfter:  s.clock.Now().UTC().Add(req.TTL.Get()),
+	})
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	re := &proto.DatabaseCertResponse{Cert: cert}
+	for _, ca := range hostCA.GetTLSKeyPairs() {
+		re.CACerts = append(re.CACerts, ca.Cert)
+	}
+	return re, nil
+}
+
+// SignDatabaseCSR generates a client certificate used by proxy when talking
+// to a remote database service.
+func (s *Server) SignDatabaseCSR(ctx context.Context, req *proto.DatabaseCSRRequest) (*proto.DatabaseCSRResponse, error) {
 	log.Debugf("Signing database CSR for cluster %v.", req.ClusterName)
 
 	clusterName, err := s.GetClusterName()
@@ -97,7 +136,7 @@ func (s *Server) SignDatabaseCSR(ctx context.Context, req *proto.SignDatabaseCSR
 		return nil, trace.Wrap(err)
 	}
 
-	re := &proto.SignDatabaseCSRResponse{Cert: tlsCert}
+	re := &proto.DatabaseCSRResponse{Cert: tlsCert}
 	for _, ca := range hostCA.GetTLSKeyPairs() {
 		re.CACerts = append(re.CACerts, ca.Cert)
 	}

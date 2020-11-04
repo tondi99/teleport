@@ -348,35 +348,20 @@ func (a *AuthCommand) generateDatabaseKeys(clusterAPI auth.ClientI) error {
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	clusterName, err := clusterAPI.GetClusterName()
+	subject := pkix.Name{CommonName: a.genHost}
+	csr, err := tlsca.GenerateCertificateRequestPEM(subject, key.Priv)
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	certAuthority, err := clusterAPI.GetCertAuthority(services.CertAuthID{
-		Type:       services.UserCA,
-		DomainName: clusterName.GetClusterName(),
-	}, true)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	tlsAuthority, err := certAuthority.TLSCA()
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	cryptoPublicKey, err := sshutils.CryptoPublicKey(key.Pub)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	certificate, err := tlsAuthority.GenerateCertificate(tlsca.CertificateRequest{
-		PublicKey: cryptoPublicKey,
-		Subject:   pkix.Name{CommonName: a.genHost},
-		NotAfter:  time.Now().UTC().Add(a.genTTL),
+	resp, err := clusterAPI.GenerateDatabaseCert(context.TODO(), &proto.DatabaseCertRequest{
+		CSR: csr,
+		TTL: proto.Duration(a.genTTL),
 	})
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	key.TLSCert = certificate
-	key.TrustedCA = auth.AuthoritiesToTrustedCerts([]services.CertAuthority{certAuthority})
+	key.TLSCert = resp.Cert
+	key.TrustedCA = []auth.TrustedCerts{{TLSCertificates: resp.CACerts}}
 	filesWritten, err := identityfile.Write(a.output, key, a.outputFormat, "")
 	if err != nil {
 		return trace.Wrap(err)

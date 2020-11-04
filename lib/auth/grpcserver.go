@@ -706,13 +706,28 @@ func (g *GRPCServer) DeleteAllDatabaseServers(ctx context.Context, req *proto.De
 	return &empty.Empty{}, nil
 }
 
-// SignDatabaseCSR ...
-func (g *GRPCServer) SignDatabaseCSR(ctx context.Context, req *proto.SignDatabaseCSRRequest) (*proto.SignDatabaseCSRResponse, error) {
+// SignDatabaseCSR generates a client certificate used by proxy when talking
+// to a remote database service.
+func (g *GRPCServer) SignDatabaseCSR(ctx context.Context, req *proto.DatabaseCSRRequest) (*proto.DatabaseCSRResponse, error) {
 	auth, err := g.authenticate(ctx)
 	if err != nil {
 		return nil, trail.ToGRPC(err)
 	}
 	response, err := auth.SignDatabaseCSR(ctx, req)
+	if err != nil {
+		return nil, trail.ToGRPC(err)
+	}
+	return response, nil
+}
+
+// GenerateDatabaseCert generates client certificate used by a database
+// service to authenticate with the database instance.
+func (g *GRPCServer) GenerateDatabaseCert(ctx context.Context, req *proto.DatabaseCertRequest) (*proto.DatabaseCertResponse, error) {
+	auth, err := g.authenticate(ctx)
+	if err != nil {
+		return nil, trail.ToGRPC(err)
+	}
+	response, err := auth.GenerateDatabaseCert(ctx, req)
 	if err != nil {
 		return nil, trail.ToGRPC(err)
 	}

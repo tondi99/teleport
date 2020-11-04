@@ -382,19 +382,37 @@ message DeleteAllDatabaseServersRequest {
     string Namespace = 1 [ (gogoproto.jsontag) = "namespace" ];
 }
 
-//
-message SignDatabaseCSRRequest {
-    //
+// DatabaseCSRRequest is a request to generate a client certificate used
+// by the proxy to authenticate with a remote database service.
+message DatabaseCSRRequest {
+    // CSR is the request to sign.
     bytes CSR = 1 [ (gogoproto.jsontag) = "csr" ];
-    //
+    // ClusterName is the name of the cluster the request is for.
     string ClusterName = 2 [ (gogoproto.jsontag) = "cluster_name" ];
 }
 
-//
-message SignDatabaseCSRResponse {
-    //
+// DatabaseCSRResponse contains the signed database certificate.
+message DatabaseCSRResponse {
+    // Cert is the signed certificate.
     bytes Cert = 1 [ (gogoproto.jsontag) = "cert" ];
-    //
+    // CACerts is a list of certificate authorities.
+    repeated bytes CACerts = 2 [ (gogoproto.jsontag) = "ca_certs" ];
+}
+
+// DatabaseCertRequest is a request to generate a client certificate used
+// by a database service to authenticate with a database instance.
+message DatabaseCertRequest {
+    // CSR is the request to sign.
+    bytes CSR = 1 [ (gogoproto.jsontag) = "csr" ];
+    // TTL is the certificate validity period.
+    int64 TTL = 2 [ (gogoproto.jsontag) = "ttl", (gogoproto.casttype) = "Duration" ];
+}
+
+// DatabaseCertResponse contains the signed certificate.
+message DatabaseCertResponse {
+    // Cert is the signed certificate.
+    bytes Cert = 1 [ (gogoproto.jsontag) = "cert" ];
+    // CACerts is a list of certificate authorities.
     repeated bytes CACerts = 2 [ (gogoproto.jsontag) = "ca_certs" ];
 }
 
@@ -493,6 +511,10 @@ service AuthService {
     // DeleteAllDatabaseServers removes all registered database proxy servers.
     rpc DeleteAllDatabaseServers(DeleteAllDatabaseServersRequest) returns (google.protobuf.Empty);
 
-    //
-    rpc SignDatabaseCSR(SignDatabaseCSRRequest) returns (SignDatabaseCSRResponse);
+    // SignDatabaseCSR generates client certificate used by proxy to
+    // authenticate with a remote database service.
+    rpc SignDatabaseCSR(DatabaseCSRRequest) returns (DatabaseCSRResponse);
+    // GenerateDatabaseCert generates client certificate used by a database
+    // service to authenticate with the database instance.
+    rpc GenerateDatabaseCert(DatabaseCertRequest) returns (DatabaseCertResponse);
 }

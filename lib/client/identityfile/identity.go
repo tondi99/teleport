@@ -135,7 +135,7 @@ func Write(filePath string, key *client.Key, format Format, clusterAddr string) 
 			return nil, trace.Wrap(err)
 		}
 
-	case FormatTLS:
+	case FormatTLS, FormatDatabase:
 		keyPath := filePath + ".key"
 		certPath := filePath + ".crt"
 		casPath := filePath + ".cas"
@@ -168,28 +168,6 @@ func Write(filePath string, key *client.Key, format Format, clusterAddr string) 
 			ClusterAddr: clusterAddr,
 			Credentials: key,
 		}); err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-	case FormatDatabase:
-		caPath := "ca.crt"
-		certPath := "server.crt"
-		keyPath := "server.key"
-		filesWritten = append(filesWritten, keyPath, certPath, caPath)
-
-		if err := ioutil.WriteFile(certPath, key.TLSCert, fileMode); err != nil {
-			return nil, trace.Wrap(err)
-		}
-		if err := ioutil.WriteFile(keyPath, key.Priv, fileMode); err != nil {
-			return nil, trace.Wrap(err)
-		}
-		var caCerts []byte
-		for _, ca := range key.TrustedCA {
-			for _, cert := range ca.TLSCertificates {
-				caCerts = append(caCerts, cert...)
-			}
-		}
-		if err := ioutil.WriteFile(caPath, caCerts, fileMode); err != nil {
 			return nil, trace.Wrap(err)
 		}
 

@@ -2738,21 +2738,16 @@ func (process *TeleportProcess) initDatabases() {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		tlsClientConfig, err := conn.ClientIdentity.TLSConfig(nil)
-		if err != nil {
-			return trace.Wrap(err)
-		}
 
 		dbServer, err = db.New(process.ExitContext(), &db.Config{
-			DataDir:         process.Config.DataDir,
-			AuthClient:      conn.Client,
-			AccessPoint:     accessPoint,
-			Authorizer:      authorizer,
-			TLSConfig:       tlsConfig,
-			TLSClientConfig: tlsClientConfig,
-			CipherSuites:    process.Config.CipherSuites,
-			GetRotation:     process.getRotation,
-			Server:          server,
+			DataDir:      process.Config.DataDir,
+			AuthClient:   conn.Client,
+			AccessPoint:  accessPoint,
+			Authorizer:   authorizer,
+			TLSConfig:    tlsConfig,
+			CipherSuites: process.Config.CipherSuites,
+			GetRotation:  process.getRotation,
+			Server:       server,
 			OnHeartbeat: func(err error) {
 				if err != nil {
 					process.BroadcastEvent(Event{Name: TeleportDegradedEvent, Payload: teleport.ComponentDB})

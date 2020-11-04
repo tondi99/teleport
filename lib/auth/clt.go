@@ -3002,13 +3002,28 @@ func (c *Client) DeleteAllDatabaseServers(ctx context.Context, namespace string)
 	return nil
 }
 
-// Sign...
-func (c *Client) SignDatabaseCSR(ctx context.Context, req *proto.SignDatabaseCSRRequest) (*proto.SignDatabaseCSRResponse, error) {
+// SignDatabaseCSR generates a client certificate used by proxy when talking
+// to a remote database service.
+func (c *Client) SignDatabaseCSR(ctx context.Context, req *proto.DatabaseCSRRequest) (*proto.DatabaseCSRResponse, error) {
 	clt, err := c.grpc()
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 	resp, err := clt.SignDatabaseCSR(ctx, req)
+	if err != nil {
+		return nil, trail.FromGRPC(err)
+	}
+	return resp, nil
+}
+
+// GenerateDatabaseCert generates client certificate used by a database
+// service to authenticate with the database instance.
+func (c *Client) GenerateDatabaseCert(ctx context.Context, req *proto.DatabaseCertRequest) (*proto.DatabaseCertResponse, error) {
+	clt, err := c.grpc()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	resp, err := clt.GenerateDatabaseCert(ctx, req)
 	if err != nil {
 		return nil, trail.FromGRPC(err)
 	}
@@ -3444,4 +3459,8 @@ type ClientI interface {
 	// CreateAppSession creates an application web session. Application web
 	// sessions represent a browser session the client holds.
 	CreateAppSession(context.Context, services.CreateAppSessionRequest) (services.WebSession, error)
+
+	// GenerateDatabaseCert generates client certificate used by a database
+	// service to authenticate with the database instance.
+	GenerateDatabaseCert(context.Context, *proto.DatabaseCertRequest) (*proto.DatabaseCertResponse, error)
 }
