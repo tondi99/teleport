@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -276,9 +277,12 @@ func Run(args []string) {
 
 	// Databases.
 	db := app.Command("db", "View and control proxied databases.")
-	lsDB := db.Command("ls", "List all registered databases.")
-	lsDB.Flag("verbose", "Show extra database fields.").Short('v').BoolVar(&cf.Verbose)
-	lsDB.Flag("cluster", clusterHelp).Envar(clusterEnvVar).StringVar(&cf.SiteName)
+	dbList := db.Command("ls", "List all available databases.")
+	dbList.Flag("verbose", "Show extra database fields.").Short('v').BoolVar(&cf.Verbose)
+	dbList.Flag("cluster", clusterHelp).Envar(clusterEnvVar).StringVar(&cf.SiteName)
+	dbLogin := db.Command("login", "Retrieve credentials for a database.")
+	dbLogin.Arg("name", "Database to retrieve credentials for. Can be obtained from tsh db ls output.").Required().StringVar(&cf.DatabaseName)
+	dbEnv := db.Command("env", "Print environment variables for the configured database.")
 
 	// join
 	join := app.Command("join", "Join the active SSH session")
@@ -320,7 +324,7 @@ func Run(args []string) {
 	// TODO(awly): unhide this flag in 5.0, after 'tsh kube ...' commands are
 	// implemented.
 	login.Flag("kube-cluster", "Name of the Kubernetes cluster to login to").Hidden().StringVar(&cf.KubernetesCluster)
-	login.Flag("db", "Database name to log into").StringVar(&cf.DatabaseName)
+	login.Flag("db", "Database name to log into").Hidden().StringVar(&cf.DatabaseName)
 	login.Alias(loginUsageFooter)
 
 	// logout deletes obtained session certificates in ~/.tsh
@@ -417,8 +421,12 @@ func Run(args []string) {
 		onStatus(&cf)
 	case lsApps.FullCommand():
 		onApps(&cf)
-	case lsDB.FullCommand():
-		onDatabases(&cf)
+	case dbList.FullCommand():
+		onListDatabases(&cf)
+	case dbLogin.FullCommand():
+		onDatabaseLogin(&cf)
+	case dbEnv.FullCommand():
+		onDatabaseEnv(&cf)
 	}
 }
 
@@ -1628,7 +1636,7 @@ func onApps(cf *CLIConf) {
 	showApps(servers, cf.Verbose)
 }
 
-func onDatabases(cf *CLIConf) {
+func onListDatabases(cf *CLIConf) {
 	tc, err := makeClient(cf, false)
 	if err != nil {
 		utils.FatalError(err)
@@ -1649,13 +1657,113 @@ func onDatabases(cf *CLIConf) {
 
 func showDatabases(servers []services.Server, verbose bool) {
 	// TODO(r0mant): Add verbose mode, add labels like Apps have.
-	t := asciitable.MakeTable([]string{"Name", "Protocol", "Description", "Endpoint"})
+	t := asciitable.MakeTable([]string{"Name", "Description", "Endpoint"})
 	for _, server := range servers {
 		for _, db := range server.GetDatabases() {
 			t.AddRow([]string{
-				db.Name, db.Protocol, db.Description, db.Endpoint,
+				db.Name, db.Description, db.Endpoint,
 			})
 		}
 	}
 	fmt.Println(t.AsBuffer().String())
+}
+
+func onDatabaseLogin(cf *CLIConf) {
+	profile, _, err := client.Status("", cf.Proxy)
+	if err != nil {
+		utils.FatalError(err)
+	}
+	if profile == nil {
+		utils.FatalError(trace.BadParameter("please login using 'tsh login' first"))
+	}
+	tc, err := makeClient(cf, false)
+	if err != nil {
+		utils.FatalError(err)
+	}
+	var servers []services.Server
+	err = client.RetryWithRelogin(cf.Context, tc, func() error {
+		servers, err = tc.ListDatabaseServersFor(cf.Context, cf.DatabaseName)
+		return trace.Wrap(err)
+	})
+	if err != nil {
+		utils.FatalError(err)
+	}
+	if len(servers) == 0 {
+		utils.FatalError(trace.NotFound(
+			"database %q not found, use 'tsh db ls' to see registered databases", cf.DatabaseName))
+	}
+	// Login logic expects this to be set.
+	cf.IdentityFormat = identityfile.DefaultFormat
+	cf.Proxy = profile.ProxyURL.Host
+	onLogin(cf)
+}
+
+func onDatabaseEnv(cf *CLIConf) {
+	profile, _, err := client.Status("", cf.Proxy)
+	if err != nil {
+		utils.FatalError(err)
+	}
+	if profile == nil {
+		utils.FatalError(trace.BadParameter("please login using 'tsh login' first"))
+	}
+	if profile.Database == "" {
+		utils.FatalError(trace.BadParameter("please login using 'tsh db login' first"))
+	}
+	pgProfile, err := pgConnectProfileFromProfile(*profile)
+	if err != nil {
+		utils.FatalError(err)
+	}
+	for k, v := range pgProfile.AsEnv() {
+		fmt.Printf("%v=%v\n", k, v)
+	}
+}
+
+type pgConnectProfile struct {
+	// Name is the profile name, the database it is for.
+	Name string
+	// Host is the host to connect to.
+	Host string
+	// Port is the port number to connect to.
+	Port int
+	// SSLMode is the SSL connection mode.
+	SSLMode string
+	// SSLRootCert is the CA certificate path.
+	SSLRootCert string
+	// SSLCert is the client certificate path.
+	SSLCert string
+	// SSLKey is the client key path.
+	SSLKey string
+}
+
+func pgConnectProfileFromProfile(profile client.ProfileStatus) (*pgConnectProfile, error) {
+	addr, err := utils.ParseAddr(profile.ProxyURL.Host)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return &pgConnectProfile{
+		Name:        profile.Database,
+		Host:        addr.Host(),
+		Port:        addr.Port(defaults.HTTPListenPort),
+		SSLMode:     "verify-full",
+		SSLRootCert: filepath.Join(profile.Dir, "keys", profile.Name, "certs.pem"),
+		SSLCert:     filepath.Join(profile.Dir, "keys", profile.Name, fmt.Sprintf("%v-x509.pem", profile.Username)),
+		SSLKey:      filepath.Join(profile.Dir, "keys", profile.Name, profile.Username),
+	}, nil
+}
+
+// AsEnv returns connection information as a set of environment variables
+// recognized by Postgres clients.
+func (p *pgConnectProfile) AsEnv() map[string]string {
+	return map[string]string{
+		"PGHOST":        p.Host,
+		"PGPORT":        strconv.Itoa(p.Port),
+		"PGSSLMODE":     p.SSLMode,
+		"PGSSLROOTCERT": p.SSLRootCert,
+		"PGSSLCERT":     p.SSLCert,
+		"PGSSLKEY":      p.SSLKey,
+	}
+}
+
+func (p *pgConnectProfile) AsService() ini.Section {
+
 }

@@ -298,6 +298,12 @@ func MakeDefaultConfig() *Config {
 // ProfileStatus combines metadata from the logged in profile and associated
 // SSH certificate.
 type ProfileStatus struct {
+	// Name is the profile name.
+	Name string
+
+	// Dir is the directory where profile is located.
+	Dir string
+
 	// ProxyURL is the URL the web client is accessible at.
 	ProxyURL url.URL
 
@@ -488,6 +494,8 @@ func readProfile(profileDir string, profileName string) (*ProfileStatus, error) 
 	}
 
 	return &ProfileStatus{
+		Name: profileName,
+		Dir:  profileDir,
 		ProxyURL: url.URL{
 			Scheme: "https",
 			Host:   profile.WebProxyAddr,
@@ -1453,6 +1461,16 @@ func (tc *TeleportClient) ListDatabaseServers(ctx context.Context) ([]services.S
 	}
 	defer proxyClient.Close()
 	return proxyClient.GetDatabaseServers(ctx, tc.Namespace)
+}
+
+// ListDatabaseServersFor returns all servers that proxy the specified database.
+func (tc *TeleportClient) ListDatabaseServersFor(ctx context.Context, dbName string) ([]services.Server, error) {
+	proxyClient, err := tc.ConnectToProxy(ctx)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	defer proxyClient.Close()
+	return proxyClient.GetDatabaseServersFor(ctx, tc.Namespace, dbName)
 }
 
 // ListAllNodes is the same as ListNodes except that it ignores labels.
