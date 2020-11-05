@@ -107,10 +107,11 @@ func NewAdminRole() Role {
 				BPF:               defaults.EnhancedEvents(),
 			},
 			Allow: RoleConditions{
-				Namespaces: []string{defaults.Namespace},
-				NodeLabels: Labels{Wildcard: []string{Wildcard}},
-				AppLabels:  Labels{Wildcard: []string{Wildcard}},
-				Rules:      CopyRulesSlice(AdminUserRules),
+				Namespaces:     []string{defaults.Namespace},
+				NodeLabels:     Labels{Wildcard: []string{Wildcard}},
+				AppLabels:      Labels{Wildcard: []string{Wildcard}},
+				DatabaseLabels: Labels{Wildcard: []string{Wildcard}},
+				Rules:          CopyRulesSlice(AdminUserRules),
 			},
 		},
 	}
@@ -164,10 +165,11 @@ func RoleForUser(u User) Role {
 				BPF:               defaults.EnhancedEvents(),
 			},
 			Allow: RoleConditions{
-				Namespaces: []string{defaults.Namespace},
-				NodeLabels: Labels{Wildcard: []string{Wildcard}},
-				AppLabels:  Labels{Wildcard: []string{Wildcard}},
-				Rules:      CopyRulesSlice(AdminUserRules),
+				Namespaces:     []string{defaults.Namespace},
+				NodeLabels:     Labels{Wildcard: []string{Wildcard}},
+				AppLabels:      Labels{Wildcard: []string{Wildcard}},
+				DatabaseLabels: Labels{Wildcard: []string{Wildcard}},
+				Rules:          CopyRulesSlice(AdminUserRules),
 			},
 		},
 	}
@@ -187,10 +189,11 @@ func RoleForCertAuthority(ca CertAuthority) Role {
 				MaxSessionTTL: NewDuration(defaults.MaxCertDuration),
 			},
 			Allow: RoleConditions{
-				Namespaces: []string{defaults.Namespace},
-				NodeLabels: Labels{Wildcard: []string{Wildcard}},
-				AppLabels:  Labels{Wildcard: []string{Wildcard}},
-				Rules:      CopyRulesSlice(DefaultCertAuthorityRules),
+				Namespaces:     []string{defaults.Namespace},
+				NodeLabels:     Labels{Wildcard: []string{Wildcard}},
+				AppLabels:      Labels{Wildcard: []string{Wildcard}},
+				DatabaseLabels: Labels{Wildcard: []string{Wildcard}},
+				Rules:          CopyRulesSlice(DefaultCertAuthorityRules),
 			},
 		},
 	}
@@ -274,7 +277,10 @@ type Role interface {
 	// SetAppLabels sets the map of app labels this role is allowed or denied access to.
 	SetAppLabels(RoleConditionType, Labels)
 
-	// TODO(r0mant): Add DatabaseLabels.
+	// GetDatabaseLabels gets the map of db labels this role is allowed or denied access to.
+	GetDatabaseLabels(RoleConditionType) Labels
+	// SetDatabaseLabels sets the map of db labels this role is allowed or denied access to.
+	SetDatabaseLabels(RoleConditionType, Labels)
 
 	// GetRules gets all allow or deny rules.
 	GetRules(rct RoleConditionType) []Rule
@@ -471,6 +477,9 @@ func (r *RoleV3) Equals(other Role) bool {
 		if !r.GetAppLabels(condition).Equals(other.GetAppLabels(condition)) {
 			return false
 		}
+		if !r.GetDatabaseLabels(condition).Equals(other.GetDatabaseLabels(condition)) {
+			return false
+		}
 		if !RuleSlicesEqual(r.GetRules(condition), other.GetRules(condition)) {
 			return false
 		}
@@ -656,6 +665,23 @@ func (r *RoleV3) SetAppLabels(rct RoleConditionType, labels Labels) {
 	}
 }
 
+// GetDatabaseLabels gets the map of db labels this role is allowed or denied access to.
+func (r *RoleV3) GetDatabaseLabels(rct RoleConditionType) Labels {
+	if rct == Allow {
+		return r.Spec.Allow.DatabaseLabels
+	}
+	return r.Spec.Deny.DatabaseLabels
+}
+
+// SetDatabaseLabels sets the map of db labels this role is allowed or denied access to.
+func (r *RoleV3) SetDatabaseLabels(rct RoleConditionType, labels Labels) {
+	if rct == Allow {
+		r.Spec.Allow.DatabaseLabels = labels.Clone()
+	} else {
+		r.Spec.Deny.DatabaseLabels = labels.Clone()
+	}
+}
+
 // GetRules gets all allow or deny rules.
 func (r *RoleV3) GetRules(rct RoleConditionType) []Rule {
 	if rct == Allow {
@@ -704,6 +730,9 @@ func (r *RoleV3) CheckAndSetDefaults() error {
 	if r.Spec.Allow.AppLabels == nil {
 		r.Spec.Allow.AppLabels = Labels{Wildcard: []string{Wildcard}}
 	}
+	if r.Spec.Allow.DatabaseLabels == nil {
+		r.Spec.Allow.DatabaseLabels = Labels{Wildcard: []string{Wildcard}}
+	}
 	if r.Spec.Deny.Namespaces == nil {
 		r.Spec.Deny.Namespaces = []string{defaults.Namespace}
 	}
@@ -751,6 +780,11 @@ func (r *RoleV3) CheckAndSetDefaults() error {
 			return trace.BadParameter("selector *:<val> is not supported")
 		}
 	}
+	for key, val := range r.Spec.Allow.DatabaseLabels {
+		if key == Wildcard && !(len(val) == 1 && val[0] == Wildcard) {
+			return trace.BadParameter("select *:<val> is not supported")
+		}
+	}
 	for i := range r.Spec.Allow.Rules {
 		err := r.Spec.Allow.Rules[i].CheckAndSetDefaults()
 		if err != nil {
@@ -796,6 +830,9 @@ func (r *RoleConditions) Equals(o RoleConditions) bool {
 		return false
 	}
 	if !r.AppLabels.Equals(o.AppLabels) {
+		return false
+	}
+	if !r.DatabaseLabels.Equals(o.DatabaseLabels) {
 		return false
 	}
 	if len(r.Rules) != len(o.Rules) {
@@ -1864,12 +1901,6 @@ func (set RoleSet) CheckAccessToServer(login string, s Server) error {
 	return trace.AccessDenied("access to server denied")
 }
 
-// CheckAccessToDatabase checks is a role has access to the specified database.
-func (set RoleSet) CheckAccessToDatabase(namespace string, database *Database) error {
-	// TODO(r0mant): Implement this.
-	return nil
-}
-
 // CheckAccessToApp checks if a role has access to an application. Deny rules
 // are checked first then allow rules. Access to an application is determined by
 // namespaces and labels.
@@ -1918,6 +1949,47 @@ func (set RoleSet) CheckAccessToApp(namespace string, app *App) error {
 		}).Debugf("Access to app %v denied, no allow rule matched; %v", app.Name, errs)
 	}
 	return trace.AccessDenied("access to app denied")
+}
+
+// CheckAccessToDatabase checks is a role has access to the specified database.
+func (set RoleSet) CheckAccessToDatabase(namespace string, db *Database) error {
+	var errs []error
+	// Check deny rules.
+	for _, role := range set {
+		matchNamespace, namespaceMessage := MatchNamespace(role.GetNamespaces(Deny), namespace)
+		matchLabels, labelsMessage, err := MatchLabels(role.GetDatabaseLabels(Deny), CombineLabels(db.StaticLabels, db.DynamicLabels))
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		if matchNamespace && matchLabels {
+			log.WithField(trace.Component, teleport.ComponentRBAC).Debugf(
+				"Access to database %q denied, deny rule in %q matched; match(namespace=%v, label=%v).",
+				db.Name, role.GetName(), namespaceMessage, labelsMessage)
+			return trace.AccessDenied("access to database denied")
+		}
+	}
+	// Check allow rules.
+	for _, role := range set {
+		matchNamespace, namespaceMessage := MatchNamespace(role.GetNamespaces(Allow), namespace)
+		matchLabels, labelsMessage, err := MatchLabels(role.GetDatabaseLabels(Allow), CombineLabels(db.StaticLabels, db.DynamicLabels))
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		if matchNamespace && matchLabels {
+			log.WithField(trace.Component, teleport.ComponentRBAC).Debugf(
+				"Access to database %q granted, allow rule in %q matched; match(namespace=%v, label=%v).",
+				db.Name, role.GetName(), namespaceMessage, labelsMessage)
+			return nil
+		}
+		if log.GetLevel() == log.DebugLevel {
+			deniedError := trace.AccessDenied("role=%v, match(namespace=%v, label=%v)",
+				role.GetName(), namespaceMessage, labelsMessage)
+			errs = append(errs, deniedError)
+		}
+	}
+	log.WithField(trace.Component, teleport.ComponentRBAC).Debugf(
+		"Access to database %q denied, no allow rule matched; %v.", db.Name, errs)
+	return trace.AccessDenied("access to database denied")
 }
 
 // CanForwardAgents returns true if role set allows forwarding agents.

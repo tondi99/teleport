@@ -401,30 +401,55 @@ func (e *postgresEngine) getTLSConfig(ctx context.Context, sessionCtx *sessionCo
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	if sessionCtx.db.Auth == "aws-iam" {
-		caCertPool := x509.NewCertPool()
+	tlsConfig := &tls.Config{
+		ServerName: addr.Host(),
+		RootCAs:    x509.NewCertPool(),
+	}
+	// Add CA certificate to the trusted pool if it's present, e.g. when
+	// connecting to RDS/Aurora which require AWS CA.
+	if sessionCtx.db.CACert != "" {
 		caBytes, err := base64.StdEncoding.DecodeString(sessionCtx.db.CACert)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-		if !caCertPool.AppendCertsFromPEM(caBytes) {
+		if !tlsConfig.RootCAs.AppendCertsFromPEM(caBytes) {
 			return nil, trace.BadParameter("failed to append CA certificate to the pool")
 		}
-		return &tls.Config{
-			ServerName: addr.Host(),
-			RootCAs:    caCertPool,
-		}, nil
 	}
-	privateBytes, _, err := native.GenerateKeyPair("")
+	// RDS/Aurora auth is done via an auth token so don't generate a client
+	// certificate and exit here.
+	if sessionCtx.db.Auth == "aws-iam" {
+		return tlsConfig, nil
+	}
+	// Otherwise, when connecting to an onprem database, generate a client
+	// certificate. The database instance should be configured with
+	// Teleport's CA obtained with 'tctl auth sign --type=db'.
+	cert, cas, err := e.getClientCert(ctx, sessionCtx)
 	if err != nil {
 		return nil, trace.Wrap(err)
+	}
+	tlsConfig.Certificates = []tls.Certificate{*cert}
+	for _, ca := range cas {
+		if !tlsConfig.RootCAs.AppendCertsFromPEM(ca) {
+			return nil, trace.BadParameter("failed to append CA certificate to the pool")
+		}
+	}
+	return tlsConfig, nil
+}
+
+// getClientCert signs an ephemeral client certificate used by this
+// server to authenticate with the database instance.
+func (e *postgresEngine) getClientCert(ctx context.Context, sessionCtx *sessionContext) (cert *tls.Certificate, cas [][]byte, err error) {
+	privateBytes, _, err := native.GenerateKeyPair("")
+	if err != nil {
+		return nil, nil, trace.Wrap(err)
 	}
 	// Postgres requires the database username to be encoded as a common
 	// name in the client certificate.
 	subject := pkix.Name{CommonName: sessionCtx.dbUser}
 	csr, err := tlsca.GenerateCertificateRequestPEM(subject, privateBytes)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return nil, nil, trace.Wrap(err)
 	}
 	e.Debugf("Generating client certificate for %s.", sessionCtx)
 	resp, err := e.authClient.GenerateDatabaseCert(ctx, &proto.DatabaseCertRequest{
@@ -432,21 +457,11 @@ func (e *postgresEngine) getTLSConfig(ctx context.Context, sessionCtx *sessionCo
 		TTL: proto.Duration(sessionCtx.identity.Expires.Sub(e.clock.Now())),
 	})
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return nil, nil, trace.Wrap(err)
 	}
 	clientCert, err := tls.X509KeyPair(resp.Cert, privateBytes)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return nil, nil, trace.Wrap(err)
 	}
-	caCertPool := x509.NewCertPool()
-	for _, caCert := range resp.CACerts {
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, trace.BadParameter("failed to append CA certificate to the pool")
-		}
-	}
-	return &tls.Config{
-		ServerName:   addr.Host(),
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      caCertPool,
-	}, nil
+	return &clientCert, resp.CACerts, nil
 }

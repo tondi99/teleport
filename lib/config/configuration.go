@@ -749,18 +749,20 @@ func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		// caBytes, err := ioutil.ReadFile(database.CAPath)
-		// if err != nil {
-		// 	return trace.Wrap(err)
-		// }
-		// certBytes, err := ioutil.ReadFile(database.CertPath)
-		// if err != nil {
-		// 	return trace.Wrap(err)
-		// }
-		// keyBytes, err := ioutil.ReadFile(database.KeyPath)
-		// if err != nil {
-		// 	return trace.Wrap(err)
-		// }
+		staticLabels := make(map[string]string)
+		if database.StaticLabels != nil {
+			staticLabels = database.StaticLabels
+		}
+		dynamicLabels := make(services.CommandLabels)
+		if database.DynamicLabels != nil {
+			for _, v := range database.DynamicLabels {
+				dynamicLabels[v.Name] = &services.CommandLabelV2{
+					Period:  services.NewDuration(v.Period),
+					Command: v.Command,
+					Result:  "",
+				}
+			}
+		}
 		var caBytes []byte
 		if database.CAPath != "" {
 			caBytes, err = ioutil.ReadFile(database.CAPath)
@@ -768,16 +770,17 @@ func applyDatabasesConfig(fc *FileConfig, cfg *service.Config) error {
 				return trace.Wrap(err)
 			}
 		}
-		// TODO(r0mant): Also parse static/dynamic labels like apps below.
 		cfg.Databases.Databases = append(cfg.Databases.Databases,
 			service.Database{
-				Name:        database.Name,
-				Description: database.Description,
-				Protocol:    database.Protocol,
-				Endpoint:    database.Endpoint,
-				CACert:      caBytes,
-				Region:      database.Region,
-				Auth:        database.Auth,
+				Name:          database.Name,
+				Description:   database.Description,
+				Protocol:      database.Protocol,
+				Endpoint:      database.Endpoint,
+				StaticLabels:  staticLabels,
+				DynamicLabels: dynamicLabels,
+				CACert:        caBytes,
+				Region:        database.Region,
+				Auth:          database.Auth,
 			})
 	}
 	return nil

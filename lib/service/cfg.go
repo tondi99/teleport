@@ -524,6 +524,10 @@ type Database struct {
 	Protocol string
 	// Endpoint is the database endpoint to connect to.
 	Endpoint string
+	// StaticLabels is a map of database static labels.
+	StaticLabels map[string]string
+	// DynamicLabels is a list of database dynamic labels.
+	DynamicLabels services.CommandLabels
 	// CACert is an optional database CA certificate.
 	CACert []byte
 	// Region is the cloud region database is running in when using AWS RDS.

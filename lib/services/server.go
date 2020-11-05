@@ -407,10 +407,13 @@ func CompareServers(a, b Server) int {
 		return Different
 	}
 
-	// If this server is proxying applications, compare the applications to
+	// If this server is proxying applications or databases, compare them to
 	// make sure they match.
 	if a.GetKind() == KindAppServer {
 		return CompareApps(a.GetApps(), b.GetApps())
+	}
+	if a.GetKind() == KindDatabaseServer {
+		return CompareDatabases(a.GetDatabases(), b.GetDatabases())
 	}
 
 	return Equal
@@ -448,6 +451,33 @@ func CompareApps(a []*App, b []*App) int {
 			if !utils.StringSlicesEqual(a[i].Rewrite.Redirect, b[i].Rewrite.Redirect) {
 				return Different
 			}
+		}
+	}
+	return Equal
+}
+
+// CompareDatabases compares two slices of databases.
+func CompareDatabases(a []*Database, b []*Database) int {
+	if len(a) != len(b) {
+		return Different
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name {
+			return Different
+		}
+		if a[i].Protocol != b[i].Protocol {
+			return Different
+		}
+		if a[i].Endpoint != b[i].Endpoint {
+			return Different
+		}
+		if !utils.StringMapsEqual(a[i].StaticLabels, b[i].StaticLabels) {
+			return Different
+		}
+		if !CmdLabelMapsEqual(
+			V2ToLabels(a[i].DynamicLabels),
+			V2ToLabels(b[i].DynamicLabels)) {
+			return Different
 		}
 	}
 	return Equal
@@ -524,21 +554,44 @@ const ServerSpecV2Schema = `{
       }
     },
     "databases": {
-		"type": ["array"],
-		"items": {
-		  "type": "object",
-		  "additionalProperties": false,
-		  "properties": {
-			"name": {"type": "string"},
-			"description": {"type": "string"},
-			"protocol": {"type": "string"},
-			"endpoint": {"type": "string"},
-			"ca_cert": {"type": "string"},
-			"region": {"type": "string"},
-			"auth": {"type": "string"}
-		  }
-		}
-	  },
+      "type": ["array"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "protocol": {"type": "string"},
+          "endpoint": {"type": "string"},
+          "ca_cert": {"type": "string"},
+          "region": {"type": "string"},
+          "auth": {"type": "string"},
+          "labels": {
+            "type": "object",
+            "additionalProperties": false,
+            "patternProperties": {
+              "^.*$":  {"type": "string"}
+            }
+          },
+          "commands": {
+            "type": "object",
+            "additionalProperties": false,
+            "patternProperties": {
+              "^.*$": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["command"],
+                "properties": {
+                  "command": {"type": "array", "items": {"type": "string"}},
+                  "period": {"type": "string"},
+                  "result": {"type": "string"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "hostname": {"type": "string"},
     "use_tunnel": {"type": "boolean"},
     "labels": {

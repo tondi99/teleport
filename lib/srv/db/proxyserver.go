@@ -37,14 +37,19 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-//
+// ProxyServer is responsible to accepting connections coming from the
+// database clients (via a multiplexer) and dispatching them to the
+// appropriate database services over reverse tunnel.
 type ProxyServer struct {
+	// ProxyServerConfig is the proxy configuration.
 	ProxyServerConfig
+	// FieldLogger is used for logging.
 	logrus.FieldLogger
+	// middleware extracts identity information from client certificates.
 	middleware *auth.Middleware
 }
 
-//
+// ProxyServerConfig is the proxy configuration.
 type ProxyServerConfig struct {
 	// AuthClient is the authenticated client to the auth server.
 	AuthClient *auth.Client
@@ -78,7 +83,7 @@ func (c *ProxyServerConfig) CheckAndSetDefaults() error {
 	return nil
 }
 
-//
+// NewProxyServer creates a new instance of the database proxy server.
 func NewProxyServer(config ProxyServerConfig) (*ProxyServer, error) {
 	if err := config.CheckAndSetDefaults(); err != nil {
 		return nil, trace.Wrap(err)
@@ -92,11 +97,12 @@ func NewProxyServer(config ProxyServerConfig) (*ProxyServer, error) {
 	}
 	// TODO(r0mant): Copy TLS config?
 	server.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
-	server.TLSConfig.GetConfigForClient = server.getConfigForClient
+	server.TLSConfig.GetConfigForClient = getConfigForClient(
+		server.TLSConfig, server.AccessPoint, server.FieldLogger)
 	return server, nil
 }
 
-//
+// Serve starts accepting database connections from the provided listener.
 func (s *ProxyServer) Serve(listener net.Listener) error {
 	defer s.Debug("Exited.")
 	for {
@@ -205,10 +211,14 @@ func (s *ProxyServer) authorize(ctx context.Context) (*proxyContext, error) {
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	s.Debugf("Proxying to %#v on %s.", db, server)
-	// TODO(r0mant): Authorize access to database. The identity will be
-	// authorized by the database server as well but by checking here
-	// we're saving a roundtrip in case of denied access.
+	s.Debugf("Will proxy to database %q on server %s.", db.Name, server)
+	// Authorize access to database. The identity will be authorized by
+	// the database server as well but by checking here we're saving a
+	// roundtrip in case of denied access.
+	err = authContext.Checker.CheckAccessToDatabase(defaults.Namespace, db)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
 	return &proxyContext{
 		identity: identity,
 		site:     site,
@@ -294,23 +304,23 @@ func (s *ProxyServer) getConfigForServer(ctx context.Context, identity tlsca.Ide
 	}, nil
 }
 
-// getConfigForClient returns TLS config with a list of certificate authorities
-// that could have signed the client certificate.
-func (s *ProxyServer) getConfigForClient(info *tls.ClientHelloInfo) (*tls.Config, error) {
-	var clusterName string
-	var err error
-	if info.ServerName != "" {
-		clusterName, err = auth.DecodeClusterName(info.ServerName)
-		if err != nil && !trace.IsNotFound(err) {
-			s.Debugf("Ignoring unsupported cluster name %q.", info.ServerName)
+func getConfigForClient(conf *tls.Config, ap auth.AccessPoint, log logrus.FieldLogger) func(*tls.ClientHelloInfo) (*tls.Config, error) {
+	return func(info *tls.ClientHelloInfo) (*tls.Config, error) {
+		var clusterName string
+		var err error
+		if info.ServerName != "" {
+			clusterName, err = auth.DecodeClusterName(info.ServerName)
+			if err != nil && !trace.IsNotFound(err) {
+				log.Debugf("Ignoring unsupported cluster name %q.", info.ServerName)
+			}
 		}
+		pool, err := auth.ClientCertPool(ap, clusterName)
+		if err != nil {
+			log.WithError(err).Error("Failed to retrieve client CA pool.")
+			return nil, nil // Fall back to the default config.
+		}
+		tlsCopy := conf.Clone()
+		tlsCopy.ClientCAs = pool
+		return tlsCopy, nil
 	}
-	pool, err := auth.ClientCertPool(s.AccessPoint, clusterName)
-	if err != nil {
-		s.WithError(err).Error("Failed to retrieve client CA pool.")
-		return nil, nil // Fall back to the default config.
-	}
-	tlsCopy := s.TLSConfig.Clone()
-	tlsCopy.ClientCAs = pool
-	return tlsCopy, nil
 }

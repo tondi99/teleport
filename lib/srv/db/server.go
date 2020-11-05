@@ -167,9 +167,25 @@ func New(ctx context.Context, c *Config) (*Server, error) {
 	}
 
 	s.c.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
-	s.c.TLSConfig.GetConfigForClient = s.getConfigForClient
+	s.c.TLSConfig.GetConfigForClient = getConfigForClient(s.c.TLSConfig, s.c.AccessPoint, s.log)
 
 	s.closeContext, s.closeFunc = context.WithCancel(ctx)
+
+	s.dynamicLabels = make(map[string]*labels.Dynamic)
+	for _, db := range s.server.GetDatabases() {
+		if len(db.DynamicLabels) == 0 {
+			continue
+		}
+		dl, err := labels.NewDynamic(s.closeContext, &labels.DynamicConfig{
+			Labels: services.V2ToLabels(db.DynamicLabels),
+			Log:    s.log,
+		})
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		dl.Sync()
+		s.dynamicLabels[db.Name] = dl
+	}
 
 	// Create heartbeat loop so applications keep sending presence to backend.
 	s.heartbeat, err = srv.NewHeartbeat(srv.HeartbeatConfig{
@@ -196,16 +212,16 @@ func (s *Server) GetServerInfo() (services.Server, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// // Update dynamic labels on all databases.
-	// databases := s.server.GetDatabases()
-	// for i := range databases {
-	// 	labels, ok := s.dynamicLabels[a.Name]
-	// 	if !ok {
-	// 		continue
-	// 	}
-	// 	a.DynamicLabels = services.LabelsToV2(dl.Get())
-	// }
-	// s.server.SetApps(apps)
+	// Update dynamic labels on all databases.
+	databases := s.server.GetDatabases()
+	for _, db := range databases {
+		labels, ok := s.dynamicLabels[db.Name]
+		if !ok {
+			continue
+		}
+		db.DynamicLabels = services.LabelsToV2(labels.Get())
+	}
+	s.server.SetDatabases(databases)
 
 	// Update the TTL.
 	s.server.SetTTL(s.c.Clock, defaults.ServerAnnounceTTL)
@@ -223,12 +239,12 @@ func (s *Server) GetServerInfo() (services.Server, error) {
 	return s.server, nil
 }
 
-// Start starts heart beating the presence of service.Apps that this
+// Start starts heartbeating the presence of service.Databases that this
 // server is proxying along with any dynamic labels.
 func (s *Server) Start() {
-	// for _, dynamicLabel := range s.dynamicLabels {
-	// 	go dynamicLabel.Start()
-	// }
+	for _, dynamicLabel := range s.dynamicLabels {
+		go dynamicLabel.Start()
+	}
 	go s.heartbeat.Run()
 }
 
@@ -241,10 +257,10 @@ func (s *Server) Close() error {
 		errs = append(errs, err)
 	}
 
-	// // Stop all dynamic labels from being updated.
-	// for _, dynamicLabel := range s.dynamicLabels {
-	// 	dynamicLabel.Close()
-	// }
+	// Stop all dynamic labels from being updated.
+	for _, dynamicLabel := range s.dynamicLabels {
+		dynamicLabel.Close()
+	}
 
 	// Signal to any blocking go routine that it should exit.
 	s.closeFunc()
@@ -333,44 +349,20 @@ func (s *Server) authorize(ctx context.Context) (*sessionContext, error) {
 	}
 	identity := authContext.Identity.GetIdentity()
 	// Fetch the requested database.
-	var database *services.Database
-	for _, db := range s.server.GetDatabases() {
-		if db.Name == identity.RouteToDatabase.DatabaseName {
-			database = db
+	var db *services.Database
+	for _, d := range s.server.GetDatabases() {
+		if d.Name == identity.RouteToDatabase.DatabaseName {
+			db = d
 		}
 	}
-	s.log.Debugf("Will connect to database %#v.", database)
-	// TODO(r0mant): Check that the identity has access to the database.
-	// err = authContext.Checker.CheckAccessToApp(defaults.Namespace, app)
-	// if err != nil {
-	// 	return nil, trace.Wrap(err)
-	// }
+	s.log.Debugf("Will connect to database %q/%v.", db.Name, db.Endpoint)
+	err = authContext.Checker.CheckAccessToDatabase(defaults.Namespace, db)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
 	return &sessionContext{
 		id:       uuid.New(),
-		db:       database,
+		db:       db,
 		identity: identity,
 	}, nil
-}
-
-// getConfigForClient returns TLS config with a list of certificate authorities
-// that could have signed the client certificate.
-//
-// TODO(r0mant): Get rid of copy-pasta.
-func (s *Server) getConfigForClient(info *tls.ClientHelloInfo) (*tls.Config, error) {
-	var clusterName string
-	var err error
-	if info.ServerName != "" {
-		clusterName, err = auth.DecodeClusterName(info.ServerName)
-		if err != nil && !trace.IsNotFound(err) {
-			s.log.Debugf("Ignoring unsupported cluster name %q.", info.ServerName)
-		}
-	}
-	pool, err := auth.ClientCertPool(s.c.AccessPoint, clusterName)
-	if err != nil {
-		s.log.WithError(err).Error("Failed to retrieve client CA pool.")
-		return nil, nil // Fall back to the default config.
-	}
-	tlsCopy := s.c.TLSConfig.Clone()
-	tlsCopy.ClientCAs = pool
-	return tlsCopy, nil
 }

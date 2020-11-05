@@ -1659,11 +1659,11 @@ func onListDatabases(cf *CLIConf) {
 
 func showDatabases(servers []services.Server, verbose bool) {
 	// TODO(r0mant): Add verbose mode, add labels like Apps have.
-	t := asciitable.MakeTable([]string{"Name", "Description", "Endpoint"})
+	t := asciitable.MakeTable([]string{"Name", "Description", "Endpoint", "Labels"})
 	for _, server := range servers {
 		for _, db := range server.GetDatabases() {
 			t.AddRow([]string{
-				db.Name, db.Description, db.Endpoint,
+				db.Name, db.Description, db.Endpoint, services.LabelsAsString(db.StaticLabels, db.DynamicLabels),
 			})
 		}
 	}
@@ -1714,17 +1714,17 @@ func onDatabaseLogin(cf *CLIConf) {
 		utils.FatalError(err)
 	}
 	fmt.Printf(`
-Connection information for %q has been saved to ~/.pg_service.conf.
+Connection information for %[1]q has been saved to ~/.pg_service.conf.
 You can connect to the database using the following command:
 
-  $ psql "postgresql://?service=%v&user=<user>&dbname=<dbname>"
+  $ psql "service=%[1]v user=<user> dbname=<dbname>"
 
-Or configure environment variables and connect without specifying the service:
+Or configure environment variables and use regular CLI flags:
 
   $ eval $(tsh db env)
   $ psql -U <user> <database>
 
-`, profile.Database, profile.Database)
+`, profile.Database)
 }
 
 func onDatabaseEnv(cf *CLIConf) {
