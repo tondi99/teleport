@@ -149,8 +149,8 @@ clean:
 test: FLAGS ?= -v -cover -race -count=25 -timeout=1h
 test: buildbox
 	docker run $(DOCKERFLAGS) $(BCCFLAGS) $(NOROOT) -t $(BUILDBOX) \
-		/bin/bash -c \
-		"examples/etcd/start-etcd.sh && sleep 1; \
+		/usr/bin/dumb-init /bin/bash -c \
+		"examples/etcd/start-etcd.sh & sleep 1; \
 		ssh-agent > external.agent.tmp && source external.agent.tmp; \
 		make -C $(SRCDIR) TELEPORT_DEBUG=0 FLAGS=\"$(FLAGS)\" clean test"
 
