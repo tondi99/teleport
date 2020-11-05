@@ -30,8 +30,10 @@ import (
 // collection is responsible for managing collection
 // of resources updates
 type collection interface {
-	// fetch fetches resources
-	fetch(ctx context.Context) error
+	// fetch fetches resources and returns a function which
+	// will apply said resources to the cache.  fetch *must*
+	// not mutate cache state outside of the apply function.
+	fetch(ctx context.Context) (apply func() error, err error)
 	// process processes event
 	processEvent(ctx context.Context, e services.Event) error
 	// watchKind returns a watch
@@ -153,20 +155,22 @@ func (r *accessRequest) erase() error {
 	return nil
 }
 
-func (r *accessRequest) fetch(ctx context.Context) error {
+func (r *accessRequest) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := r.DynamicAccess.GetAccessRequests(ctx, services.AccessRequestFilter{})
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := r.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		if err := r.dynamicAccessCache.UpsertAccessRequest(ctx, resource); err != nil {
+	return func() error {
+		if err := r.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			if err := r.dynamicAccessCache.UpsertAccessRequest(ctx, resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (r *accessRequest) processEvent(ctx context.Context, event services.Event) error {
@@ -216,20 +220,22 @@ func (c *tunnelConnection) erase() error {
 	return nil
 }
 
-func (c *tunnelConnection) fetch(ctx context.Context) error {
+func (c *tunnelConnection) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Presence.GetAllTunnelConnections()
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		if err := c.presenceCache.UpsertTunnelConnection(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			if err := c.presenceCache.UpsertTunnelConnection(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *tunnelConnection) processEvent(ctx context.Context, event services.Event) error {
@@ -279,20 +285,22 @@ func (c *remoteCluster) erase() error {
 	return nil
 }
 
-func (c *remoteCluster) fetch(ctx context.Context) error {
+func (c *remoteCluster) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Presence.GetRemoteClusters()
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		if err := c.presenceCache.CreateRemoteCluster(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			if err := c.presenceCache.CreateRemoteCluster(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *remoteCluster) processEvent(ctx context.Context, event services.Event) error {
@@ -349,21 +357,23 @@ func (c *reverseTunnel) erase() error {
 	return nil
 }
 
-func (c *reverseTunnel) fetch(ctx context.Context) error {
+func (c *reverseTunnel) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Presence.GetReverseTunnels(services.SkipValidation())
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		c.setTTL(resource)
-		if err := c.presenceCache.UpsertReverseTunnel(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			c.setTTL(resource)
+			if err := c.presenceCache.UpsertReverseTunnel(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *reverseTunnel) processEvent(ctx context.Context, event services.Event) error {
@@ -413,23 +423,25 @@ func (c *proxy) erase() error {
 	return nil
 }
 
-func (c *proxy) fetch(ctx context.Context) error {
+func (c *proxy) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Presence.GetProxies()
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
 
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-
-	for _, resource := range resources {
-		c.setTTL(resource)
-		if err := c.presenceCache.UpsertProxy(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+
+		for _, resource := range resources {
+			c.setTTL(resource)
+			if err := c.presenceCache.UpsertProxy(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *proxy) processEvent(ctx context.Context, event services.Event) error {
@@ -479,23 +491,25 @@ func (c *authServer) erase() error {
 	return nil
 }
 
-func (c *authServer) fetch(ctx context.Context) error {
+func (c *authServer) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Presence.GetAuthServers()
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
 
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-
-	for _, resource := range resources {
-		c.setTTL(resource)
-		if err := c.presenceCache.UpsertAuthServer(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+
+		for _, resource := range resources {
+			c.setTTL(resource)
+			if err := c.presenceCache.UpsertAuthServer(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *authServer) processEvent(ctx context.Context, event services.Event) error {
@@ -545,21 +559,23 @@ func (c *node) erase() error {
 	return nil
 }
 
-func (c *node) fetch(ctx context.Context) error {
+func (c *node) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Presence.GetNodes(defaults.Namespace)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		c.setTTL(resource)
-		if _, err := c.presenceCache.UpsertNode(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			c.setTTL(resource)
+			if _, err := c.presenceCache.UpsertNode(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *node) processEvent(ctx context.Context, event services.Event) error {
@@ -609,21 +625,23 @@ func (c *namespace) erase() error {
 	return nil
 }
 
-func (c *namespace) fetch(ctx context.Context) error {
+func (c *namespace) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Presence.GetNamespaces()
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		c.setTTL(&resource)
-		if err := c.presenceCache.UpsertNamespace(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			c.setTTL(&resource)
+			if err := c.presenceCache.UpsertNamespace(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *namespace) processEvent(ctx context.Context, event services.Event) error {
@@ -683,47 +701,58 @@ func (c *certAuthority) erase() error {
 	return nil
 }
 
-func (c *certAuthority) fetch(ctx context.Context) error {
-	if err := c.updateCertAuthorities(services.HostCA); err != nil {
-		return trace.Wrap(err)
+func (c *certAuthority) fetch(ctx context.Context) (apply func() error, err error) {
+	applyHostCAs, err := c.fetchCertAuthorities(services.HostCA)
+	if err != nil {
+		return nil, trace.Wrap(err)
 	}
-	if err := c.updateCertAuthorities(services.UserCA); err != nil {
-		return trace.Wrap(err)
+
+	applyUserCAs, err := c.fetchCertAuthorities(services.UserCA)
+	if err != nil {
+		return nil, trace.Wrap(err)
 	}
-	if err := c.updateCertAuthorities(services.JWTSigner); err != nil {
-		// DELETE IN: 5.1
-		//
-		// All clusters will support JWT signers in 5.1.
-		if strings.Contains(err.Error(), "authority type is not supported") {
-			return nil
+
+	applyJWTSigners, err := c.fetchCertAuthorities(services.JWTSigner)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return func() error {
+		if err := applyHostCAs(); err != nil {
+			return trace.Wrap(err)
 		}
-		return trace.Wrap(err)
-	}
-	return nil
+		if err := applyUserCAs(); err != nil {
+			return trace.Wrap(err)
+		}
+		return trace.Wrap(applyJWTSigners())
+	}, nil
 }
 
-func (c *certAuthority) updateCertAuthorities(caType services.CertAuthType) error {
+func (c *certAuthority) fetchCertAuthorities(caType services.CertAuthType) (apply func() error, err error) {
 	authorities, err := c.Trust.GetCertAuthorities(caType, c.watch.LoadSecrets, services.SkipValidation())
 	if err != nil {
 		// DELETE IN: 5.1
 		//
 		// All clusters will support JWT signers in 5.1.
-		if !strings.Contains(err.Error(), "authority type is not supported") {
-			return trace.Wrap(err)
+		if strings.Contains(err.Error(), "authority type is not supported") {
+			return func() error { return nil }, nil
 		}
+		return nil, trace.Wrap(err)
 	}
-	if err := c.trustCache.DeleteAllCertAuthorities(caType); err != nil {
-		if !trace.IsNotFound(err) {
-			return trace.Wrap(err)
+	return func() error {
+		if err := c.trustCache.DeleteAllCertAuthorities(caType); err != nil {
+			if !trace.IsNotFound(err) {
+				return trace.Wrap(err)
+			}
 		}
-	}
-	for _, resource := range authorities {
-		c.setTTL(resource)
-		if err := c.trustCache.UpsertCertAuthority(resource); err != nil {
-			return trace.Wrap(err)
+		for _, resource := range authorities {
+			c.setTTL(resource)
+			if err := c.trustCache.UpsertCertAuthority(resource); err != nil {
+				return trace.Wrap(err)
+			}
 		}
-	}
-	return nil
+		return nil
+	}, nil
 }
 
 func (c *certAuthority) processEvent(ctx context.Context, event services.Event) error {
@@ -783,23 +812,29 @@ func (c *staticTokens) erase() error {
 	return nil
 }
 
-func (c *staticTokens) fetch(ctx context.Context) error {
+func (c *staticTokens) fetch(ctx context.Context) (apply func() error, err error) {
+	var noTokens bool
 	staticTokens, err := c.ClusterConfig.GetStaticTokens()
 	if err != nil {
 		if !trace.IsNotFound(err) {
-			return trace.Wrap(err)
+			return nil, trace.Wrap(err)
 		}
-		if err := c.erase(); err != nil {
+		noTokens = true
+	}
+	return func() error {
+		if noTokens {
+			if err := c.erase(); err != nil {
+				return trace.Wrap(err)
+			}
+			return nil
+		}
+		c.setTTL(staticTokens)
+		err = c.clusterConfigCache.SetStaticTokens(staticTokens)
+		if err != nil {
 			return trace.Wrap(err)
 		}
 		return nil
-	}
-	c.setTTL(staticTokens)
-	err = c.clusterConfigCache.SetStaticTokens(staticTokens)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
+	}, nil
 }
 
 func (c *staticTokens) processEvent(ctx context.Context, event services.Event) error {
@@ -849,21 +884,23 @@ func (c *provisionToken) erase() error {
 	return nil
 }
 
-func (c *provisionToken) fetch(ctx context.Context) error {
+func (c *provisionToken) fetch(ctx context.Context) (apply func() error, err error) {
 	tokens, err := c.Provisioner.GetTokens()
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range tokens {
-		c.setTTL(resource)
-		if err := c.provisionerCache.UpsertToken(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range tokens {
+			c.setTTL(resource)
+			if err := c.provisionerCache.UpsertToken(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *provisionToken) processEvent(ctx context.Context, event services.Event) error {
@@ -914,24 +951,30 @@ func (c *clusterConfig) erase() error {
 	return nil
 }
 
-func (c *clusterConfig) fetch(ctx context.Context) error {
+func (c *clusterConfig) fetch(ctx context.Context) (apply func() error, err error) {
+	var noConfig bool
 	clusterConfig, err := c.ClusterConfig.GetClusterConfig()
 	if err != nil {
 		if !trace.IsNotFound(err) {
-			return trace.Wrap(err)
+			return nil, trace.Wrap(err)
 		}
-		if err := c.erase(); err != nil {
-			return trace.Wrap(err)
+		noConfig = true
+	}
+	return func() error {
+		if noConfig {
+			if err := c.erase(); err != nil {
+				return trace.Wrap(err)
+			}
+			return nil
+		}
+		c.setTTL(clusterConfig)
+		if err := c.clusterConfigCache.SetClusterConfig(clusterConfig); err != nil {
+			if !trace.IsNotFound(err) {
+				return trace.Wrap(err)
+			}
 		}
 		return nil
-	}
-	c.setTTL(clusterConfig)
-	if err := c.clusterConfigCache.SetClusterConfig(clusterConfig); err != nil {
-		if !trace.IsNotFound(err) {
-			return trace.Wrap(err)
-		}
-	}
-	return nil
+	}, nil
 }
 
 func (c *clusterConfig) processEvent(ctx context.Context, event services.Event) error {
@@ -982,24 +1025,30 @@ func (c *clusterName) erase() error {
 	return nil
 }
 
-func (c *clusterName) fetch(ctx context.Context) error {
+func (c *clusterName) fetch(ctx context.Context) (apply func() error, err error) {
+	var noName bool
 	clusterName, err := c.ClusterConfig.GetClusterName()
 	if err != nil {
 		if !trace.IsNotFound(err) {
-			return trace.Wrap(err)
+			return nil, trace.Wrap(err)
 		}
-		if err := c.erase(); err != nil {
-			return trace.Wrap(err)
+		noName = true
+	}
+	return func() error {
+		if noName {
+			if err := c.erase(); err != nil {
+				return trace.Wrap(err)
+			}
+			return nil
+		}
+		c.setTTL(clusterName)
+		if err := c.clusterConfigCache.UpsertClusterName(clusterName); err != nil {
+			if !trace.IsNotFound(err) {
+				return trace.Wrap(err)
+			}
 		}
 		return nil
-	}
-	c.setTTL(clusterName)
-	if err := c.clusterConfigCache.UpsertClusterName(clusterName); err != nil {
-		if !trace.IsNotFound(err) {
-			return trace.Wrap(err)
-		}
-	}
-	return nil
+	}, nil
 }
 
 func (c *clusterName) processEvent(ctx context.Context, event services.Event) error {
@@ -1049,21 +1098,23 @@ func (c *user) erase() error {
 	return nil
 }
 
-func (c *user) fetch(ctx context.Context) error {
+func (c *user) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Users.GetUsers(false)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		c.setTTL(resource)
-		if err := c.usersCache.UpsertUser(resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			c.setTTL(resource)
+			if err := c.usersCache.UpsertUser(resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *user) processEvent(ctx context.Context, event services.Event) error {
@@ -1114,21 +1165,23 @@ func (c *role) erase() error {
 	return nil
 }
 
-func (c *role) fetch(ctx context.Context) error {
+func (c *role) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := c.Access.GetRoles()
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := c.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		c.setTTL(resource)
-		if err := c.accessCache.UpsertRole(ctx, resource); err != nil {
+	return func() error {
+		if err := c.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			c.setTTL(resource)
+			if err := c.accessCache.UpsertRole(ctx, resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (c *role) processEvent(ctx context.Context, event services.Event) error {
@@ -1178,21 +1231,23 @@ func (a *appServer) erase() error {
 	return nil
 }
 
-func (a *appServer) fetch(ctx context.Context) error {
+func (a *appServer) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := a.Presence.GetAppServers(ctx, defaults.Namespace)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := a.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		a.setTTL(resource)
-		if _, err := a.presenceCache.UpsertAppServer(ctx, resource); err != nil {
+	return func() error {
+		if err := a.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			a.setTTL(resource)
+			if _, err := a.presenceCache.UpsertAppServer(ctx, resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (a *appServer) processEvent(ctx context.Context, event services.Event) error {
@@ -1240,21 +1295,23 @@ func (a *appSession) erase() error {
 	return nil
 }
 
-func (a *appSession) fetch(ctx context.Context) error {
+func (a *appSession) fetch(ctx context.Context) (apply func() error, err error) {
 	resources, err := a.AppSession.GetAppSessions(ctx)
 	if err != nil {
-		return trace.Wrap(err)
+		return nil, trace.Wrap(err)
 	}
-	if err := a.erase(); err != nil {
-		return trace.Wrap(err)
-	}
-	for _, resource := range resources {
-		a.setTTL(resource)
-		if err := a.appSessionCache.UpsertAppSession(ctx, resource); err != nil {
+	return func() error {
+		if err := a.erase(); err != nil {
 			return trace.Wrap(err)
 		}
-	}
-	return nil
+		for _, resource := range resources {
+			a.setTTL(resource)
+			if err := a.appSessionCache.UpsertAppSession(ctx, resource); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func (a *appSession) processEvent(ctx context.Context, event services.Event) error {
