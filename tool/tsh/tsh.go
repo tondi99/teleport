@@ -24,6 +24,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"os/user"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -57,6 +58,7 @@ import (
 	gops "github.com/google/gops/agent"
 	"github.com/jonboulle/clockwork"
 	"github.com/sirupsen/logrus"
+	"gopkg.in/ini.v1"
 )
 
 var log = logrus.WithFields(logrus.Fields{
@@ -1696,6 +1698,33 @@ func onDatabaseLogin(cf *CLIConf) {
 	cf.IdentityFormat = identityfile.DefaultFormat
 	cf.Proxy = profile.ProxyURL.Host
 	onLogin(cf)
+	// Refresh the profile after login.
+	profile, _, err = client.Status("", cf.Proxy)
+	if err != nil {
+		utils.FatalError(err)
+	}
+	// Save connection information to ~/.pg_service.conf file which psql
+	// can refer to via "service" connection string parameter.
+	pgProfile, err := pgConnectProfileFromProfile(*profile)
+	if err != nil {
+		utils.FatalError(err)
+	}
+	err = pgProfile.Save()
+	if err != nil {
+		utils.FatalError(err)
+	}
+	fmt.Printf(`
+Connection information for %q has been saved to ~/.pg_service.conf.
+You can connect to the database using the following command:
+
+  $ psql "postgresql://?service=%v&user=<user>&dbname=<dbname>"
+
+Or configure environment variables and connect without specifying the service:
+
+  $ eval $(tsh db env)
+  $ psql -U <user> <database>
+
+`, profile.Database, profile.Database)
 }
 
 func onDatabaseEnv(cf *CLIConf) {
@@ -1714,7 +1743,7 @@ func onDatabaseEnv(cf *CLIConf) {
 		utils.FatalError(err)
 	}
 	for k, v := range pgProfile.AsEnv() {
-		fmt.Printf("%v=%v\n", k, v)
+		fmt.Printf("export %v=%v\n", k, v)
 	}
 }
 
@@ -1744,14 +1773,14 @@ func pgConnectProfileFromProfile(profile client.ProfileStatus) (*pgConnectProfil
 		Name:        profile.Database,
 		Host:        addr.Host(),
 		Port:        addr.Port(defaults.HTTPListenPort),
-		SSLMode:     "verify-full",
+		SSLMode:     "verify-ca", // TODO(r0mant): Change to verify-full.
 		SSLRootCert: filepath.Join(profile.Dir, "keys", profile.Name, "certs.pem"),
 		SSLCert:     filepath.Join(profile.Dir, "keys", profile.Name, fmt.Sprintf("%v-x509.pem", profile.Username)),
 		SSLKey:      filepath.Join(profile.Dir, "keys", profile.Name, profile.Username),
 	}, nil
 }
 
-// AsEnv returns connection information as a set of environment variables
+// AsEnv returns this connection profile as a set of environment variables
 // recognized by Postgres clients.
 func (p *pgConnectProfile) AsEnv() map[string]string {
 	return map[string]string{
@@ -1764,6 +1793,51 @@ func (p *pgConnectProfile) AsEnv() map[string]string {
 	}
 }
 
-func (p *pgConnectProfile) AsService() ini.Section {
-
+// Save saves this connection profile in the ~/.pg_service.conf ini file.
+//
+// The profile goes into a separate section with the name equal to the
+// name of the database that user is logged into and looks like this:
+//
+//   [postgres]
+//   host=localhost
+//   port=3080
+//   sslmode=verify-full
+//   sslrootcert=/home/user/.tsh/keys/127.0.0.1/certs.pem
+//   sslcert=/home/user/.tsh/keys/127.0.0.1/user-x509.pem
+//   sslkey=/home/user/.tsh/keys/127.0.0.1/user
+//
+// With the profile like this, a user can refer to it using "service" psql
+// parameter:
+//
+//   $ psql service=postgres <other parameters>
+func (p *pgConnectProfile) Save() error {
+	user, err := user.Current()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	path := filepath.Join(user.HomeDir, ".pg_service.conf")
+	iniFile, err := ini.LooseLoad(path)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	section := iniFile.Section(p.Name)
+	if section != nil {
+		iniFile.DeleteSection(p.Name)
+	}
+	section, err = iniFile.NewSection(p.Name)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	section.NewKey("host", p.Host)
+	section.NewKey("port", strconv.Itoa(p.Port))
+	section.NewKey("sslmode", p.SSLMode)
+	section.NewKey("sslrootcert", p.SSLRootCert)
+	section.NewKey("sslcert", p.SSLCert)
+	section.NewKey("sslkey", p.SSLKey)
+	ini.PrettyFormat = false
+	err = iniFile.SaveTo(path)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	return nil
 }

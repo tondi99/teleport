@@ -725,6 +725,9 @@ google.golang.org/protobuf/types/pluginpb
 gopkg.in/check.v1
 # gopkg.in/inf.v0 v0.9.1
 gopkg.in/inf.v0
+# gopkg.in/ini.v1 v1.62.0
+## explicit
+gopkg.in/ini.v1
 # gopkg.in/square/go-jose.v2 v2.5.1
 ## explicit
 gopkg.in/square/go-jose.v2

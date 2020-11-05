@@ -117,6 +117,12 @@ func (s *ProxyServer) Serve(listener net.Listener) error {
 		// Let the appropriate proxy handle the connection and go back
 		// to listening.
 		go func() {
+			defer func() {
+				err := conn.Close()
+				if err != nil {
+					s.WithError(err).Error("Failed to close connection.")
+				}
+			}()
 			err := proxy.handleConnection(context.TODO(), conn)
 			if err != nil {
 				s.WithError(err).Error("Failed to handle connection.")
@@ -238,7 +244,7 @@ func (s *ProxyServer) pickDatabaseServer(ctx context.Context, identity tlsca.Ide
 			}
 		}
 	}
-	return nil, nil, nil, trace.NotFound("database instance %v not found on %v",
+	return nil, nil, nil, trace.NotFound("database %q not found among registered database servers on cluster %q",
 		identity.RouteToDatabase.DatabaseName,
 		identity.RouteToDatabase.ClusterName)
 }
