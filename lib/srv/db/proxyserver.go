@@ -215,7 +215,7 @@ func (s *ProxyServer) authorize(ctx context.Context) (*proxyContext, error) {
 	// Authorize access to database. The identity will be authorized by
 	// the database server as well but by checking here we're saving a
 	// roundtrip in case of denied access.
-	err = authContext.Checker.CheckAccessToDatabase(defaults.Namespace, db)
+	err = authContext.Checker.CheckAccessToDatabase(defaults.Namespace, "", "", db)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

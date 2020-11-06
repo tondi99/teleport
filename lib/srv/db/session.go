@@ -31,6 +31,8 @@ type sessionContext struct {
 	db *services.Database
 	// identity is the identity of the connecting teleport user.
 	identity tlsca.Identity
+	// checker is the access checker for the identity
+	checker services.AccessChecker
 	// dbUser is the requested database user.
 	dbUser string
 	// dbName is the requested database name.

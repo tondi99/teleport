@@ -29,6 +29,7 @@ import (
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/auth/native"
 	"github.com/gravitational/teleport/lib/auth/proto"
+	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
 
@@ -207,6 +208,10 @@ func (e *postgresEngine) handleConnection(ctx context.Context, sessionCtx *sessi
 	if err != nil {
 		return trace.Wrap(err)
 	}
+	err = e.checkAccess(sessionCtx)
+	if err != nil {
+		return trace.Wrap(err)
+	}
 	frontend, frontendConn, err := e.connect(ctx, sessionCtx)
 	if err != nil {
 		return trace.Wrap(err)
@@ -246,6 +251,11 @@ func (e *postgresEngine) handleStartup(backend *pgproto3.Backend, sessionCtx *se
 	sessionCtx.dbName = startupMessage.Parameters["database"]
 	sessionCtx.dbUser = startupMessage.Parameters["user"]
 	return nil
+}
+
+func (e *postgresEngine) checkAccess(sessionCtx *sessionContext) error {
+	return sessionCtx.checker.CheckAccessToDatabase(
+		defaults.Namespace, sessionCtx.dbName, sessionCtx.dbUser, sessionCtx.db)
 }
 
 // connect establishes the connection to the database instance and returns

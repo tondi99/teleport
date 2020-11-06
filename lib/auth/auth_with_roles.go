@@ -2039,7 +2039,7 @@ func (a *ServerWithRoles) GetDatabaseServers(ctx context.Context, namespace stri
 	for _, server := range servers {
 		filtered := make([]*services.Database, 0, len(server.GetDatabases()))
 		for _, database := range server.GetDatabases() {
-			err := a.context.Checker.CheckAccessToDatabase(server.GetNamespace(), database)
+			err := a.context.Checker.CheckAccessToDatabase(server.GetNamespace(), "", "", database)
 			if err != nil && !trace.IsAccessDenied(err) {
 				return nil, trace.Wrap(err)
 			} else if err == nil {

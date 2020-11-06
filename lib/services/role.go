@@ -111,6 +111,8 @@ func NewAdminRole() Role {
 				NodeLabels:     Labels{Wildcard: []string{Wildcard}},
 				AppLabels:      Labels{Wildcard: []string{Wildcard}},
 				DatabaseLabels: Labels{Wildcard: []string{Wildcard}},
+				DatabaseNames:  []string{Wildcard},
+				DatabaseUsers:  []string{Wildcard},
 				Rules:          CopyRulesSlice(AdminUserRules),
 			},
 		},
@@ -169,6 +171,8 @@ func RoleForUser(u User) Role {
 				NodeLabels:     Labels{Wildcard: []string{Wildcard}},
 				AppLabels:      Labels{Wildcard: []string{Wildcard}},
 				DatabaseLabels: Labels{Wildcard: []string{Wildcard}},
+				DatabaseNames:  []string{Wildcard},
+				DatabaseUsers:  []string{Wildcard},
 				Rules:          CopyRulesSlice(AdminUserRules),
 			},
 		},
@@ -281,6 +285,16 @@ type Role interface {
 	GetDatabaseLabels(RoleConditionType) Labels
 	// SetDatabaseLabels sets the map of db labels this role is allowed or denied access to.
 	SetDatabaseLabels(RoleConditionType, Labels)
+
+	// GetDatabaseNames gets a list of database names this role is allowed or denied access to.
+	GetDatabaseNames(RoleConditionType) []string
+	// SetDatabasenames sets a list of database names this role is allowed or denied access to.
+	SetDatabaseNames(RoleConditionType, []string)
+
+	// GetDatabaseUsers gets a list of database users this role is allowed or denied access to.
+	GetDatabaseUsers(RoleConditionType) []string
+	// SetDatabaseUsers sets a list of database users this role is allowed or denied access to.
+	SetDatabaseUsers(RoleConditionType, []string)
 
 	// GetRules gets all allow or deny rules.
 	GetRules(rct RoleConditionType) []Rule
@@ -679,6 +693,40 @@ func (r *RoleV3) SetDatabaseLabels(rct RoleConditionType, labels Labels) {
 		r.Spec.Allow.DatabaseLabels = labels.Clone()
 	} else {
 		r.Spec.Deny.DatabaseLabels = labels.Clone()
+	}
+}
+
+// GetDatabaseNames gets a list of database names this role is allowed or denied access to.
+func (r *RoleV3) GetDatabaseNames(rct RoleConditionType) []string {
+	if rct == Allow {
+		return r.Spec.Allow.DatabaseNames
+	}
+	return r.Spec.Deny.DatabaseNames
+}
+
+// SetDatabaseNames sets a list of database names this role is allowed or denied access to.
+func (r *RoleV3) SetDatabaseNames(rct RoleConditionType, values []string) {
+	if rct == Allow {
+		r.Spec.Allow.DatabaseNames = values
+	} else {
+		r.Spec.Deny.DatabaseNames = values
+	}
+}
+
+// GetDatabaseUsers gets a list of database users this role is allowed or denied access to.
+func (r *RoleV3) GetDatabaseUsers(rct RoleConditionType) []string {
+	if rct == Allow {
+		return r.Spec.Allow.DatabaseUsers
+	}
+	return r.Spec.Deny.DatabaseUsers
+}
+
+// SetDatabaseUsers sets a list of database users this role is allowed or denied access to.
+func (r *RoleV3) SetDatabaseUsers(rct RoleConditionType, values []string) {
+	if rct == Allow {
+		r.Spec.Allow.DatabaseUsers = values
+	} else {
+		r.Spec.Deny.DatabaseUsers = values
 	}
 }
 
@@ -1448,7 +1496,7 @@ type AccessChecker interface {
 	CheckAccessToApp(string, *App) error
 
 	// CheckAccessToDatabase checks access to the specified database.
-	CheckAccessToDatabase(string, *Database) error
+	CheckAccessToDatabase(string, string, string, *Database) error
 }
 
 // FromSpec returns new RoleSet created from spec
@@ -1646,6 +1694,26 @@ func MatchLogin(selectors []string, login string) (bool, string) {
 		}
 	}
 	return false, fmt.Sprintf("no match, role selectors %v, login: %v", selectors, login)
+}
+
+// MatchDatabaseName returns true if provided database name matches selectors.
+func MatchDatabaseName(selectors []string, name string) (bool, string) {
+	for _, n := range selectors {
+		if n == name || n == Wildcard {
+			return true, "matched"
+		}
+	}
+	return false, fmt.Sprintf("no match, role selectors %v, database name: %v", selectors, name)
+}
+
+// MatchDatabaseUser returns true if provided database user matches selectors.
+func MatchDatabaseUser(selectors []string, user string) (bool, string) {
+	for _, u := range selectors {
+		if u == user || u == Wildcard {
+			return true, "matched"
+		}
+	}
+	return false, fmt.Sprintf("no match, role selectors %v, database user: %v", selectors, user)
 }
 
 // MatchLabels matches selector against target. Empty selector matches
@@ -1952,7 +2020,7 @@ func (set RoleSet) CheckAccessToApp(namespace string, app *App) error {
 }
 
 // CheckAccessToDatabase checks is a role has access to the specified database.
-func (set RoleSet) CheckAccessToDatabase(namespace string, db *Database) error {
+func (set RoleSet) CheckAccessToDatabase(namespace, dbName, dbUser string, db *Database) error {
 	var errs []error
 	// Check deny rules.
 	for _, role := range set {
@@ -1961,10 +2029,20 @@ func (set RoleSet) CheckAccessToDatabase(namespace string, db *Database) error {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		if matchNamespace && matchLabels {
+		var matchName bool
+		var nameMessage string
+		if dbName != "" {
+			matchName, nameMessage = MatchDatabaseName(role.GetDatabaseNames(Deny), dbName)
+		}
+		var matchUser bool
+		var userMessage string
+		if dbUser != "" {
+			matchUser, userMessage = MatchDatabaseUser(role.GetDatabaseUsers(Deny), dbUser)
+		}
+		if matchNamespace && (matchLabels || matchName || matchUser) {
 			log.WithField(trace.Component, teleport.ComponentRBAC).Debugf(
-				"Access to database %q denied, deny rule in %q matched; match(namespace=%v, label=%v).",
-				db.Name, role.GetName(), namespaceMessage, labelsMessage)
+				"Access to database %q denied, deny rule in %q matched; match(namespace=%v, label=%v, dbname=%v, dbuser=%v).",
+				db.Name, role.GetName(), namespaceMessage, labelsMessage, nameMessage, userMessage)
 			return trace.AccessDenied("access to database denied")
 		}
 	}
@@ -1975,15 +2053,25 @@ func (set RoleSet) CheckAccessToDatabase(namespace string, db *Database) error {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		if matchNamespace && matchLabels {
+		var matchName bool = true
+		var nameMessage string
+		if dbName != "" {
+			matchName, nameMessage = MatchDatabaseName(role.GetDatabaseNames(Allow), dbName)
+		}
+		var matchUser bool = true
+		var userMessage string
+		if dbUser != "" {
+			matchUser, userMessage = MatchDatabaseUser(role.GetDatabaseUsers(Allow), dbUser)
+		}
+		if matchNamespace && matchLabels && matchName && matchUser {
 			log.WithField(trace.Component, teleport.ComponentRBAC).Debugf(
-				"Access to database %q granted, allow rule in %q matched; match(namespace=%v, label=%v).",
-				db.Name, role.GetName(), namespaceMessage, labelsMessage)
+				"Access to database %q granted, allow rule in %q matched; match(namespace=%v, label=%v, dbname=%v, dbuser=%v).",
+				db.Name, role.GetName(), namespaceMessage, labelsMessage, nameMessage, userMessage)
 			return nil
 		}
 		if log.GetLevel() == log.DebugLevel {
-			deniedError := trace.AccessDenied("role=%v, match(namespace=%v, label=%v)",
-				role.GetName(), namespaceMessage, labelsMessage)
+			deniedError := trace.AccessDenied("role=%v, match(namespace=%v, label=%v, dbname=%v, dbuser=%v)",
+				role.GetName(), namespaceMessage, labelsMessage, nameMessage, userMessage)
 			errs = append(errs, deniedError)
 		}
 	}

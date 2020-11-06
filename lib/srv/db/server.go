@@ -356,7 +356,7 @@ func (s *Server) authorize(ctx context.Context) (*sessionContext, error) {
 		}
 	}
 	s.log.Debugf("Will connect to database %q/%v.", db.Name, db.Endpoint)
-	err = authContext.Checker.CheckAccessToDatabase(defaults.Namespace, db)
+	err = authContext.Checker.CheckAccessToDatabase(defaults.Namespace, "", "", db)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -364,5 +364,6 @@ func (s *Server) authorize(ctx context.Context) (*sessionContext, error) {
 		id:       uuid.New(),
 		db:       db,
 		identity: identity,
+		checker:  authContext.Checker,
 	}, nil
 }

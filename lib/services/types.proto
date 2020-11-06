@@ -838,6 +838,11 @@ message RoleConditions {
         (gogoproto.jsontag) = "db_labels,omitempty",
         (gogoproto.customtype) = "Labels"
     ];
+
+    // DatabaseNames is a list of database names this role is allowed to connect to.
+    repeated string DatabaseNames = 10 [ (gogoproto.jsontag) = "db_names,omitempty" ];
+    // DatabaseUsers is a list of databaes users this role is allowed to connect as.
+    repeated string DatabaseUsers = 11 [ (gogoproto.jsontag) = "db_users,omitempty" ];
 }
 
 // AccessRequestConditions is a matcher for allow/deny restrictions on
