@@ -23,6 +23,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/auth/testauthority"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -108,13 +110,13 @@ func (s *KeyStoreTestSuite) TestListKeys(c *check.C) {
 	// read all bob keys:
 	for i := 0; i < keyNum; i++ {
 		host := fmt.Sprintf("host-%v", i)
-		keys2, err := s.store.GetKey(host, "bob")
+		keys2, err := s.store.GetKey(host, "bob", "")
 		c.Assert(err, check.IsNil)
-		c.Assert(*keys2, check.DeepEquals, keys[i])
+		c.Assert(cmp.Diff(*keys2, keys[i], cmpopts.EquateEmpty()), check.Equals, "")
 	}
 
 	// read sam's key and make sure it's the same:
-	skey, err := s.store.GetKey("sam.host", "sam")
+	skey, err := s.store.GetKey("sam.host", "sam", "")
 	c.Assert(err, check.IsNil)
 	c.Assert(samKey.Cert, check.DeepEquals, skey.Cert)
 	c.Assert(samKey.Pub, check.DeepEquals, skey.Pub)
@@ -128,19 +130,21 @@ func (s *KeyStoreTestSuite) TestKeyCRUD(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	// load back and compare:
-	keyCopy, err := s.store.GetKey("host.a", "bob")
+	keyCopy, err := s.store.GetKey("host.a", "bob", "")
 	c.Assert(err, check.IsNil)
-	c.Assert(key.EqualsTo(keyCopy), check.Equals, true)
+	// ProxyHost gets set internally during addKey.
+	key.ProxyHost = keyCopy.ProxyHost
+	c.Assert(cmp.Diff(key, keyCopy, cmpopts.EquateEmpty()), check.Equals, "")
 
 	// Delete & verify that it's gone
-	err = s.store.DeleteKey("host.a", "bob")
+	err = s.store.DeleteKey("host.a", "bob", "")
 	c.Assert(err, check.IsNil)
-	_, err = s.store.GetKey("host.a", "bob")
+	_, err = s.store.GetKey("host.a", "bob", "")
 	c.Assert(err, check.NotNil)
 	c.Assert(trace.IsNotFound(err), check.Equals, true)
 
 	// Delete non-existing
-	err = s.store.DeleteKey("non-existing-host", "non-existing-user")
+	err = s.store.DeleteKey("non-existing-host", "non-existing-user", "")
 	c.Assert(err, check.NotNil)
 	c.Assert(trace.IsNotFound(err), check.Equals, true)
 }
@@ -155,9 +159,9 @@ func (s *KeyStoreTestSuite) TestDeleteAll(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	// check keys exist
-	_, err = s.store.GetKey("proxy.example.com", "foo")
+	_, err = s.store.GetKey("proxy.example.com", "foo", "")
 	c.Assert(err, check.IsNil)
-	_, err = s.store.GetKey("proxy.example.com", "bar")
+	_, err = s.store.GetKey("proxy.example.com", "bar", "")
 	c.Assert(err, check.IsNil)
 
 	// delete all keys
@@ -165,9 +169,9 @@ func (s *KeyStoreTestSuite) TestDeleteAll(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	// verify keys gone
-	_, err = s.store.GetKey("proxy.example.com", "foo")
+	_, err = s.store.GetKey("proxy.example.com", "foo", "")
 	c.Assert(err, check.NotNil)
-	_, err = s.store.GetKey("proxy.example.com", "bar")
+	_, err = s.store.GetKey("proxy.example.com", "bar", "")
 	c.Assert(err, check.NotNil)
 }
 
@@ -273,7 +277,7 @@ func (s *KeyStoreTestSuite) TestCheckKey(c *check.C) {
 	err = s.addKey("host.a", "bob", key)
 	c.Assert(err, check.IsNil)
 
-	_, err = s.store.GetKey("host.a", "bob")
+	_, err = s.store.GetKey("host.a", "bob", "")
 	c.Assert(err, check.IsNil)
 }
 
@@ -295,7 +299,7 @@ func (s *KeyStoreTestSuite) TestCheckKeyFIPS(c *check.C) {
 	err = s.addKey("host.a", "bob", key)
 	c.Assert(err, check.IsNil)
 
-	_, err = s.store.GetKey("host.a", "bob")
+	_, err = s.store.GetKey("host.a", "bob", "")
 	c.Assert(err, check.NotNil)
 }
 
